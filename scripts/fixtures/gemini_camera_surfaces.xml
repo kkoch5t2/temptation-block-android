@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic roots using native resource names; no captured content or device data. -->
+<surfaces>
+  <hierarchy name="camera-compose">
+    <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_camera_compose_view"/>
+  </hierarchy>
+  <hierarchy name="camera-preview">
+    <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_capture_camera_preview_container"/>
+  </hierarchy>
+  <hierarchy name="camera-permission">
+    <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_capture_ask_permission_view"/>
+  </hierarchy>
+  <hierarchy name="image-preview">
+    <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_imagepreview_container"/>
+  </hierarchy>
+  <hierarchy name="live-camera">
+    <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_live_camera_container"/>
+  </hierarchy>
+  <hierarchy name="google-search">
+    <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/search_box" text="Gemini camera"/>
+  </hierarchy>
+  <hierarchy name="foreign-owner">
+    <node package="com.example.other" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_camera_compose_view"/>
+  </hierarchy>
+</surfaces>

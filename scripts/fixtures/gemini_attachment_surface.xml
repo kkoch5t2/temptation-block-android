@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<hierarchy>
+  <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/action_bar_root">
+    <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/design_bottom_sheet">
+      <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_add_attachment_bottomsheet"/>
+      <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_add_attachment_scroll_view">
+        <node package="com.google.android.googlequicksearchbox" resource-id="com.google.android.googlequicksearchbox:id/assistant_robin_add_attachment_bottomsheet_content"/>
+      </node>
+    </node>
+  </node>
+</hierarchy>

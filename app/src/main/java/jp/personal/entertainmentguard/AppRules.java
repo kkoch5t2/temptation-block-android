@@ -4,7 +4,7 @@ import android.content.SharedPreferences;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Known entertainment apps + user-curated packages. Avoid matching all Android packages. */
+/** Built-in categories are selection hints; enforcement requires an explicit selection. */
 public final class AppRules {
   private AppRules(){}
   private static final Map<String,String> KNOWN=new LinkedHashMap<>();
@@ -37,11 +37,7 @@ public final class AppRules {
   }
   public static String knownCategory(String pkg){return KNOWN.get(pkg);}
   public static String category(String pkg,SharedPreferences prefs){
-    if(pkg==null)return null;
-    // Explicit user choices override built-in defaults in either direction.
-    if(prefs.contains("app:"+pkg))
-      return prefs.getBoolean("app:"+pkg,false)?"指定アプリ":null;
-    return KNOWN.get(pkg);
+    return RestrictionTargets.app(prefs,pkg)?"指定アプリ":null;
   }
   public static boolean supportedBrowser(String pkg){
     return "com.android.chrome".equals(pkg)||"com.brave.browser".equals(pkg);

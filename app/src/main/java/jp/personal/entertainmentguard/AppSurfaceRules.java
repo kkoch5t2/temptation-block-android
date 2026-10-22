@@ -91,8 +91,21 @@ public final class AppSurfaceRules {
     GOOGLE+":id/assistant_robin_live_camera_container",
     GOOGLE+":id/assistant_robin_live_camera_view"
   };
+  public static final String[] GOOGLE_SEARCH_VIEW_IDS={
+    GOOGLE+":id/search_box",
+    GOOGLE+":id/search_plate",
+    GOOGLE+":id/search_plate_inner",
+    GOOGLE+":id/search_box_text"
+  };
   public static String restrictionPackage(String pkg,String activity,boolean geminiView){
-    if(GOOGLE.equals(pkg)&&(geminiView||(activity!=null&&activity.startsWith(GEMINI_ACTIVITY_PREFIX))))return GEMINI;
-    return pkg;
+    return restrictionPackage(pkg,activity,geminiView,false);
+  }
+  public static String restrictionPackage(String pkg,String activity,boolean geminiView,boolean searchView){
+    if(!GOOGLE.equals(pkg))return pkg;
+    if(geminiView||(activity!=null&&activity.startsWith(GEMINI_ACTIVITY_PREFIX)))return GEMINI;
+    if(searchView||"com.google.android.googlequicksearchbox.SearchActivity".equals(activity)
+        ||"com.google.android.apps.gsa.queryentry.QueryEntryActivity".equals(activity))return GOOGLE;
+    // An unrecognized shared surface is not proof of Google Search use.
+    return null;
   }
 }

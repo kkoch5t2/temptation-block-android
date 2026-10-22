@@ -45,25 +45,31 @@ public class AppSurfaceRulesTest {
     check(g,"com.google.android.googlequicksearchbox.SearchActivity",false,g);
     check(g,"android.widget.FrameLayout",true,b);
     check(g,"com.google.android.googlequicksearchbox.SearchActivity",false,g);
-    check(g,null,false,g);
+    check(g,null,false,null);
     check(g,AppSurfaceRules.GEMINI_ACTIVITY,false,b);
-    check(g,null,false,g); // No cached Gemini exemption when switching to Search.
+    check(g,null,false,null); // Missing evidence must never become Search.
     check(g,"com.google.android.apps.search.assistant.surfaces.voice.robin.camera.CameraActivity",false,b);
     check(g,"com.google.android.apps.search.assistant.surfaces.voice.robin.live.LiveActivity",false,b);
     check(g,"com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity",false,b);
-    check(g,"com.google.android.apps.search.assistant.surfaces.voice.robinevil.CameraActivity",false,g);
+    check(g,"com.google.android.apps.search.assistant.surfaces.voice.robinevil.CameraActivity",false,null);
     check(g,"android.app.Dialog",true,b); // Camera/dialog native root, heartbeat and events.
     check(g,null,true,b); // Camera heartbeat must use the same Gemini policy.
     check(g,"com.google.android.googlequicksearchbox.SearchActivity",false,g);
-    check(g,"com.google.android.apps.search.lens.LensActivity",false,g);
+    check(g,"com.google.android.apps.search.lens.LensActivity",false,null);
     check("com.google.android.GoogleCamera",null,true,"com.google.android.GoogleCamera");
     check("com.android.chrome",null,true,"com.android.chrome");
 
     check("com.android.chrome",AppSurfaceRules.GEMINI_ACTIVITY,true,"com.android.chrome");
     check("com.example.other",null,true,"com.example.other");
-    check(g,"com.example.GeminiActivity",false,g);
+    check(g,"com.example.GeminiActivity",false,null);
     check(b,null,false,b); // Explicit Gemini restriction remains possible.
     check(null,null,false,null);
+    check(g,"android.widget.FrameLayout",false,null);
+    check(g,"android.app.Dialog",false,null);
+    if(!g.equals(AppSurfaceRules.restrictionPackage(g,null,false,true)))throw new AssertionError("positive Search native tree");
+    if(!b.equals(AppSurfaceRules.restrictionPackage(g,null,true,true)))throw new AssertionError("Gemini native evidence wins");
+    if(AppSurfaceRules.restrictionPackage(g,null,false,false)!=null)throw new AssertionError("unknown is not Search");
+
     String chrome="com.android.chrome";
     if(!AppSurfaceRules.remoteDesktopSurface(chrome,"https://remotedesktop.google.com/access",false,null))throw new AssertionError("remote URL");
     if(!AppSurfaceRules.remoteDesktopSurface(chrome,null,true,"リモート アクセス - Chrome リモート デスクトップ"))throw new AssertionError("remote TWA");

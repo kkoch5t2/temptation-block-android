@@ -39,6 +39,8 @@ public class GuardianService extends AccessibilityService {
   private final java.util.Set<String> usageGroups=new java.util.HashSet<>();
   private long usageLastTick=0, usageWarningAt=0;
   private boolean closingBlockedTab=false;
+  private String deniedKey=null,deniedOwner=null;
+  private int deniedWindow=-1;
   private boolean inspectingPip=false;
   private int lastPipWindow=-1;
   private long lastPipAttempt=0;
@@ -107,8 +109,8 @@ public class GuardianService extends AccessibilityService {
       }
     }
   }
-  /** During strict mode inspect window metadata; read only a PiP root's package.
-   *  No document text, title, sibling contents or notification data is retrieved. */
+  /** During strict mode only explicitly selected PiP policies are restricted.
+   *  Shared Google surfaces require native IDs; no document or notification text is read. */
   private void inspectStrictPip(){
     if(prefs==null||inspectingPip)return;
     inspectingPip=true;
@@ -137,12 +139,16 @@ public class GuardianService extends AccessibilityService {
           try{
             CharSequence owner=root.getPackageName();
             if(owner==null||owner.length()==0)continue;
-            stopBlockedMedia("app:"+owner.toString());
+            String pipOwner=owner.toString();
+            String pipIdentity=restrictionPackage(root,pipOwner,null);
+            if(!RestrictionTargets.activeKey(prefs,"app:"+pipIdentity)
+                &&!NewAppGuard.blocked(this,prefs,pipOwner))continue;
+            stopBlockedMedia("app:"+pipOwner);
             // Android supplies this action on the PiP root to close that window.
             if(root.performAction(AccessibilityNodeInfo.ACTION_DISMISS)){
               prefs.edit().putInt("pip_closed_total",prefs.getInt("pip_closed_total",0)+1)
                 .putLong("last_pip_close",System.currentTimeMillis()).apply();
-              showWarning("⛔ 厳格モード中は小窓再生（PiP）を使えません。");
+              showWarning("⛔ 厳格モード中は制限対象アプリのPiPを使えません。");
             }
           }finally{root.recycle();}
         }
@@ -164,25 +170,30 @@ public class GuardianService extends AccessibilityService {
   private boolean isBrowser(String p) {
     return p.equals("com.brave.browser")||p.equals("com.android.chrome");
   }
-  /** Gemini runs in Google's package. Match native view IDs, never chat/page text.
-   *  The activity event covers the initial frame before the view tree is populated;
-   *  each heartbeat rechecks the actual tree, so a later Search screen is restricted. */
-  private String restrictionPackage(AccessibilityNodeInfo root,String pkg,String activity){
-    boolean geminiView=false;
-    if(AppSurfaceRules.GOOGLE.equals(pkg)){
-      for(String id:AppSurfaceRules.GEMINI_VIEW_IDS){
-        List<AccessibilityNodeInfo> found=root.findAccessibilityNodeInfosByViewId(id);
-        if(found==null)continue;
-        for(AccessibilityNodeInfo node:found){
-          if(node!=null){
-            if(node.getPackageName()!=null && AppSurfaceRules.GOOGLE.contentEquals(node.getPackageName()))geminiView=true;
-            node.recycle();
-          }
-        }
-        if(geminiView)break;
+  /** Shared hosts need positive native evidence. Unknown surfaces have no app policy. */
+  private boolean nativeMarker(AccessibilityNodeInfo root,String pkg,String[] ids){
+    for(String id:ids){
+      if(id.equals(root.getViewIdResourceName())&&root.isVisibleToUser()
+          &&pkg.contentEquals(root.getPackageName()))return true;
+      List<AccessibilityNodeInfo> found=root.findAccessibilityNodeInfosByViewId(id);
+      if(found==null)continue;
+      boolean match=false;
+      for(AccessibilityNodeInfo node:found)if(node!=null){
+        match|=node.isVisibleToUser()&&pkg.contentEquals(node.getPackageName());
+        node.recycle();
       }
+      if(match)return true;
     }
-    return AppSurfaceRules.restrictionPackage(pkg,activity,geminiView);
+    return false;
+  }
+  private String restrictionPackage(AccessibilityNodeInfo root,String pkg,String activity){
+    if(AppSurfaceRules.GOOGLE.equals(pkg))
+      return AppSurfaceRules.restrictionPackage(pkg,activity,
+        nativeMarker(root,pkg,AppSurfaceRules.GEMINI_VIEW_IDS),
+        nativeMarker(root,pkg,AppSurfaceRules.GOOGLE_SEARCH_VIEW_IDS));
+    if(isBrowser(pkg)&&nativeMarker(root,pkg,new String[]{pkg+":id/custom_tabs_toolbar"}))
+      return null; // A shared Custom Tab does not establish use of the browser app.
+    return pkg;
   }
   private String urlFromTree(AccessibilityNodeInfo root,String pkg){
     if(root==null)return null;
@@ -293,9 +304,6 @@ public class GuardianService extends AccessibilityService {
       String restrictionPkg=restrictionPackage(root,pkg,null);
       String appCategory=AppRules.category(restrictionPkg,prefs);
       if(appCategory!=null&&!isBrowser(pkg)){enforceLimit("app:"+restrictionPkg,appCategory,"アプリ");return;}
-      if(AppRules.unsupportedBrowser(pkg)){
-        stopUsage();blockNow("browser:"+pkg,"未対応ブラウザ","抜け道");return;
-      }
       if(!isBrowser(pkg)){stopUsage();resetIfStale();return;}
       String url=urlFromTree(root,pkg);
       if(remoteDesktopSurface(root,pkg,url)){
@@ -312,45 +320,17 @@ public class GuardianService extends AccessibilityService {
       activeBrowserUrl=url;
       activeBrowserPackage=pkg;
       if(url==null){
-        if(appCategory!=null)enforceLimit("app:"+pkg,appCategory,"ブラウザ");
+        if(appCategory!=null)enforceLimit("app:"+restrictionPkg,appCategory,"ブラウザ");
         else stopUsage();
         resetIfStale();return;
       }
-      Classifier.Hit hit=Classifier.inspect(url);
-      if(hit.host==null){
-        if(appCategory!=null)enforceLimit("app:"+pkg,appCategory,"ブラウザ");
-        else stopUsage();
-        resetIfStale();return;
-      }
-      long now=SystemClock.elapsedRealtime();
-      lastSeen=now;
-      if(isBlocked(hit.host)){
-        enforceBrowserLimit("domain:"+hit.host,pkg,"指定サイト","Web");
-        trackingHost=null;
-        return;
-      }
-      if(!hit.flagged()){
-        if(appCategory!=null)enforceLimit("app:"+pkg,appCategory,"ブラウザ");
-        else stopUsage();
-        trackingHost=null;
-        return;
-      }
-      if(hit.strong) {
-        enforceBrowserLimit("domain:"+hit.host,pkg,hit.category,"Web");
-        trackingHost=null;
-        return;
-      }
-      if(appCategory!=null)enforceLimit("app:"+pkg,appCategory,"ブラウザ");
-      else stopUsage();
-      if(!hit.host.equals(trackingHost)||!pkg.equals(trackingPackage)){
-        trackingHost=hit.host;trackingPackage=pkg;
-        trackingCategory=hit.category;trackingStrong=hit.strong;
-        trackingStarted=now;
-        if(now-lastWarning>12000){
-          lastWarning=now;
-          showWarning("⚠ "+hit.category+"関連サイトです。学習の目的を確認してください。");
-        }
-        }
+      String host=Classifier.host(url);
+      if(host!=null&&RestrictionTargets.domain(prefs,host)){
+        enforceBrowserLimit("domain:"+host,restrictionPkg,"指定サイト","Web");
+      }else if(appCategory!=null){
+        enforceLimit("app:"+restrictionPkg,appCategory,"ブラウザ");
+      }else stopUsage();
+      trackingHost=null;
     }catch(Exception ignored){
       // Failure never touches system settings or unrelated apps.
     }finally{if(root!=null)root.recycle();}
@@ -464,8 +444,7 @@ public class GuardianService extends AccessibilityService {
             && pkg.equals(check.getPackageName().toString())
               ?urlFromTree(check,pkg):null;
         String host=Classifier.host(current);
-        recovered=host!=null && !Classifier.inspect(current).flagged()
-          && !isBlocked(host);
+        recovered=host!=null&&!isBlocked(host);
       }catch(Exception ignored){}
       finally{if(check!=null)check.recycle();}
       closingBlockedTab=false;
@@ -481,6 +460,7 @@ public class GuardianService extends AccessibilityService {
     AccessibilityNodeInfo root=getRootInActiveWindow();
     if(root==null)return false;
     boolean focused=false;
+    final int windowId=root.getWindowId();
     try{
       if(!pkg.contentEquals(root.getPackageName()))return false;
       List<AccessibilityNodeInfo> bars=root.findAccessibilityNodeInfosByViewId(pkg+":id/url_bar");
@@ -494,7 +474,8 @@ public class GuardianService extends AccessibilityService {
       AccessibilityNodeInfo active=getRootInActiveWindow();
       if(active==null)return;
       try{
-        if(!pkg.contentEquals(active.getPackageName()))return;
+        if(active.getPackageName()==null||!RestrictionTargets.sameWindow(pkg,windowId,
+            active.getPackageName().toString(),active.getWindowId()))return;
         List<AccessibilityNodeInfo> bars=active.findAccessibilityNodeInfosByViewId(pkg+":id/url_bar");
         if(bars==null)return;
         for(AccessibilityNodeInfo bar:bars){
@@ -603,12 +584,49 @@ public class GuardianService extends AccessibilityService {
     return key.startsWith("domain:")
       ||key.equals("app:"+activeBrowserPackage);
   }
+  private boolean beginDeniedAccess(String key){
+    if(!RestrictionTargets.activeKey(prefs,key))return false;
+    AccessibilityNodeInfo root=getRootInActiveWindow();
+    if(root==null)return false;
+    try{
+      if(root.getPackageName()==null)return false;
+      String pkg=root.getPackageName().toString();
+      String identity=restrictionPackage(root,pkg,null);
+      boolean matches=false;
+      if(key.startsWith("app:")){
+        String target=key.substring(4);
+        matches=target.equals(identity);
+        if(AppSurfaceRules.REMOTE_DESKTOP.equals(target)&&isBrowser(pkg))
+          matches=remoteDesktopSurface(root,pkg,urlFromTree(root,pkg));
+      }else if(key.startsWith("domain:")&&isBrowser(pkg)){
+        String current=Classifier.host(urlFromTree(root,pkg));
+        matches=current!=null&&current.equals(Classifier.host(key.substring(7)));
+      }
+      if(!matches)return false;
+      deniedKey=key;deniedOwner=pkg;deniedWindow=root.getWindowId();
+      return deniedWindow>=0;
+    }finally{root.recycle();}
+  }
+  private boolean deniedStillForeground(String key){
+    if(!key.equals(deniedKey)||!RestrictionTargets.activeKey(prefs,key))return false;
+    AccessibilityNodeInfo root=getRootInActiveWindow();
+    if(root==null)return false;
+    try{
+      return root.getPackageName()!=null&&RestrictionTargets.sameWindow(deniedOwner,deniedWindow,
+        root.getPackageName().toString(),root.getWindowId());
+    }finally{root.recycle();}
+  }
   private void blockAndCloseIfBrowser(String key,String category,String type){
+    if(!beginDeniedAccess(key))return;
     stopBlockedMedia(key);
     if(redirectBlockedBrowser(key,category,type))return;
     finishDeniedAccess(key,category,type);
   }
   private void finishDeniedAccess(String key,String category,String type){
+    if(!deniedStillForeground(key)){
+      prefs.edit().putString("tab_close_stage","cancelled_after_window_change").apply();
+      return;
+    }
     if(prefs.getInt("restriction_mode",1)==2)blockNow(key,category,type);
     else timedBlock(key,category,type);
   }
@@ -754,7 +772,7 @@ public class GuardianService extends AccessibilityService {
 
   /** Show a full-screen deterrent for the selected duration. This NEVER unlocks the target. */
   private void timedBlock(String key,String category,String type){
-    if(blockingOverlay!=null)return;
+    if(blockingOverlay!=null||!deniedStillForeground(key))return;
     int seconds=CooldownSettings.seconds(prefs);
     if(seconds==0){blockNow(key,category,type);return;}
     long now=System.currentTimeMillis();
@@ -849,6 +867,7 @@ public class GuardianService extends AccessibilityService {
     blockingOverlay=null;
   }
   private void blockNow(String key,String category,String type){
+    if(!deniedStillForeground(key))return;
     stopUsage();
     long now=SystemClock.elapsedRealtime();
     if(now-lastBlockedAction>=1600){
@@ -885,23 +904,7 @@ public class GuardianService extends AccessibilityService {
     if(SystemClock.elapsedRealtime()-lastSeen>6000)trackingHost=null;
   }
   private boolean isBlocked(String host){
-    String entry=prefs.getString("blocked:"+host,null);
-    if(entry!=null)return true;
-    // Block subdomains of previously blocked domain.
-    String[] parts=host.split("\\.");
-    for(int i=1;i<parts.length-1;i++){
-      StringBuilder base=new StringBuilder();
-      for(int j=i;j<parts.length;j++) {
-        if(j>i)base.append('.');
-        base.append(parts[j]);
-      }
-      if(prefs.contains("blocked:"+base))return true;
-    }
-    return false;
-  }
-  private void blockLocally(String host,String category){
-    if(host==null||!trackingStrong)return;
-    prefs.edit().putString("blocked:"+host,category+" | "+System.currentTimeMillis()).apply();
+    return RestrictionTargets.domain(prefs,host);
   }
   private void showWarning(String message){
     clearOverlay();

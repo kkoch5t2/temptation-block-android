@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="app_name">誘惑ブロック</string>
-  <string name="service_description">漫画・アニメ・ゲーム・動画・スポーツ観戦を検知し、標準では画面全体に30秒間の使用禁止画面を表示します。1日の使用時間制限も選べます。厳格モード中はPiPの小窓を検知して閉じます。本文・検索履歴は保存しません。</string>
+  <string name="service_description">指定したアプリ・Webサイトの利用を検知し、標準では画面全体に30秒間の使用禁止画面を表示します。1日の使用時間制限も選べます。厳格モード中は制限対象アプリのPiPの小窓を検知して閉じます。本文・検索履歴は保存しません。</string>
 </resources>

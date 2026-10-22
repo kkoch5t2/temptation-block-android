@@ -119,8 +119,7 @@ public class MainActivity extends GuardActivity {
     for(int i=0;i<titles.size();i++){
       String pkg=options.get(titles.get(i));
       packages.add(pkg);
-      chosen[i]=prefs.contains("app:"+pkg)
-        ?prefs.getBoolean("app:"+pkg,false):AppRules.knownCategory(pkg)!=null;
+      chosen[i]=RestrictionTargets.app(prefs,pkg);
     }
     new AlertDialog.Builder(this).setTitle("ブロックするアプリを選択")
       .setMultiChoiceItems(titles.toArray(new String[0]),chosen,
@@ -319,7 +318,7 @@ public class MainActivity extends GuardActivity {
       strict?ui.success:ui.muted,true);
     strictState.setPadding(0,d(10),0,d(6));
     if(strict)bindStrictCountdown(label(strictCard,"",14,ui.muted,false));
-    if(strict)label(strictCard,"小窓再生（PiP）は禁止",14,ui.muted,false);
+    if(strict)label(strictCard,"制限対象の小窓再生（PiP）は禁止",14,ui.muted,false);
     action(strictCard,"厳格モードを確認",()->showPage("strict"));
 
     boolean newAppsBlocked=NewAppRules.enabled(prefs);
@@ -340,11 +339,11 @@ public class MainActivity extends GuardActivity {
     TextView description=label(status,active?"決めた期間、制限を緩める変更を防いでいます。":
       "期間を決めて、制限設定を守るための機能です。",14,ui.muted,false);
     description.setPadding(0,d(12),0,d(16));description.setLineSpacing(d(4),1);
-    TextView pip=label(status,active?"🪟 小窓再生（PiP）は禁止中":
-      "🪟 厳格モード中は小窓再生（PiP）を禁止",15,active?ui.danger:ui.muted,true);
+    TextView pip=label(status,active?"🪟 制限対象の小窓再生（PiP）は禁止中":
+      "🪟 厳格モード中は制限対象のPiPを禁止",15,active?ui.danger:ui.muted,true);
     pip.setPadding(0,0,0,d(8));
     TextView pipHelp=label(status,
-      "PiPを検知すると再生停止を送り、小窓を閉じます。通常の全画面表示や分割画面は対象外です。",
+      "指定したアプリのPiPを検知すると再生停止を送り、小窓を閉じます。未指定アプリ、通常の全画面表示や分割画面は対象外です。",
       14,ui.muted,false);
     pipHelp.setPadding(0,0,0,d(16));pipHelp.setLineSpacing(d(3),1);
     if(active){

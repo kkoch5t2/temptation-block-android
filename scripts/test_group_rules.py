@@ -72,6 +72,34 @@ public class GroupRulesTest {
   public static void main(String[] a){
     Memory n=new Memory();
     GroupRules.setTimeSource(new FakeClock());
+    Memory explicit=new Memory();GroupRules.ensure(explicit);
+    for(String pkg:new String[]{"com.example.notes","com.google.android.youtube","com.miui.videoplayer","org.mozilla.firefox","com.android.chrome","com.google.android.googlequicksearchbox","com.google.android.apps.bard"}){
+      eq(AppRules.category(pkg,explicit),null,"unselected app is allowed: "+pkg);
+      eq(RestrictionTargets.activeKey(explicit,"app:"+pkg),false,"no default group enforcement: "+pkg);
+    }
+    eq(RestrictionTargets.domain(explicit,"youtube.com"),false,"known domain is not implicitly selected");
+    eq(RestrictionTargets.activeKey(explicit,"domain:youtube.com"),false,"unselected entertainment site allowed");
+    GroupRules.assignApp(explicit,GroupRules.DEFAULT,"com.example.selected");
+    eq(RestrictionTargets.activeKey(explicit,"app:com.example.selected"),true,"explicit app selected");
+    explicit.edit().putBoolean("app:com.example.selected",false).commit();
+    eq(RestrictionTargets.activeKey(explicit,"app:com.example.selected"),false,"explicit exclusion overrides old group");
+    explicit.edit().remove("app:com.example.selected").commit();
+    eq(RestrictionTargets.activeKey(explicit,"app:com.example.selected"),true,"group-only imported selection retained");
+    GroupRules.assignDomain(explicit,GroupRules.DEFAULT,"example.com");
+    eq(RestrictionTargets.activeKey(explicit,"domain:video.example.com"),true,"registered site covers subdomains");
+    eq(RestrictionTargets.activeKey(explicit,"domain:example.com.evil.test"),false,"site suffix spoofing never selects");
+    eq(RestrictionTargets.activeKey(explicit,"domain:example.org"),false,"other site not selected");
+    explicit.edit().putString("blocked:legacy.example","manual import").commit();
+    eq(RestrictionTargets.activeKey(explicit,"domain:sub.legacy.example"),true,"legacy explicit domain retained");
+    eq(RestrictionTargets.activeKey(explicit,"browser:org.mozilla.firefox"),false,"unsupported browser cannot authorize denial");
+    eq(RestrictionTargets.sameWindow("browser",7,"notes",7),false,"delayed block cancelled on app change");
+    eq(RestrictionTargets.sameWindow("browser",7,"browser",8),false,"delayed block cancelled on window change");
+    eq(RestrictionTargets.sameWindow("browser",-1,"browser",-1),false,"unknown windows cannot authorize delayed block");
+    eq(RestrictionTargets.sameWindow("browser",7,"browser",7),true,"original target window remains eligible");
+    GroupRules.setEnabled(explicit,GroupRules.DEFAULT,false);
+    eq(RestrictionTargets.activeKey(explicit,"app:com.example.selected"),false,"inactive app group cannot block");
+    eq(RestrictionTargets.activeKey(explicit,"domain:example.com"),false,"inactive site group cannot block");
+
     eq(NewAppRules.enabled(n),false,"new apps default off");
     eq(NewAppRules.enable(n,Map.of()),false,"incomplete baseline rejected");
     eq(NewAppRules.enable(n,Map.of("existing",100L)),true,"snapshot activation");
@@ -282,6 +310,6 @@ public class GroupRulesTest {
     classes=tmp/"classes"
     classes.mkdir()
     src=root/"app/src/main/java/jp/personal/entertainmentguard"
-    files=[tmp/"android/content/SharedPreferences.java",src/"GroupRules.java",src/"CooldownPolicy.java",src/"CooldownSettings.java",src/"NewAppRules.java",src/"UsageLimit.java",src/"Classifier.java",src/"AppRules.java",tmp/"jp/personal/entertainmentguard/GroupRulesTest.java"]
+    files=[tmp/"android/content/SharedPreferences.java",src/"GroupRules.java",src/"CooldownPolicy.java",src/"CooldownSettings.java",src/"NewAppRules.java",src/"UsageLimit.java",src/"Classifier.java",src/"AppRules.java",src/"RestrictionTargets.java",tmp/"jp/personal/entertainmentguard/GroupRulesTest.java"]
     subprocess.run(["javac","-d",str(classes)]+list(map(str,files)),check=True)
     subprocess.run(["java","-cp",str(classes),"jp.personal.entertainmentguard.GroupRulesTest"],check=True)

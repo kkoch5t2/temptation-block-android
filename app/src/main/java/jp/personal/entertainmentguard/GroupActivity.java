@@ -493,8 +493,7 @@ public class GroupActivity extends GuardActivity {
     boolean[] selected=new boolean[labels.size()],original=new boolean[labels.size()];
     for(int i=0;i<labels.size();i++){
       String pkg=choices.get(labels.get(i));packages.add(pkg);
-      boolean enabled=prefs.contains("app:"+pkg)?prefs.getBoolean("app:"+pkg,false)
-        :AppRules.knownCategory(pkg)!=null;
+      boolean enabled=RestrictionTargets.app(prefs,pkg);
       selected[i]=enabled && id.equals(GroupRules.appGroup(prefs,pkg));
       original[i]=selected[i];
     }

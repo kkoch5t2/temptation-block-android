@@ -221,7 +221,7 @@ public final class GroupRules {
     if(!exists(p,id)||pkg==null||pkg.isEmpty())return false;
     String from=appGroup(p,pkg);
     // A previously disabled app is being newly restricted, not weakened.
-    boolean selected=p.getBoolean("app:"+pkg,true);
+    boolean selected=RestrictionTargets.app(p,pkg);
     if(strict(p)&&selected&&!atLeastAsStrict(p,id,from))return false;
     carryToday(p,from,id);
     return p.edit().putString("group.app."+pkg,id).putBoolean("app:"+pkg,true).commit();
@@ -229,13 +229,7 @@ public final class GroupRules {
   public static boolean assignDomain(SharedPreferences p,String id,String host){
     if(!exists(p,id)||host==null||host.isEmpty())return false;
     String from=domainGroup(p,host);
-    boolean protectedAlready=Classifier.inspect("https://"+host).strong;
-    String ancestor=host.toLowerCase(Locale.ROOT);
-    while(ancestor.contains(".")){
-      if(p.contains("blocked:"+ancestor)){protectedAlready=true;break;}
-      ancestor=ancestor.substring(ancestor.indexOf('.')+1);
-    }
-    if(!DEFAULT.equals(from))protectedAlready=true;
+    boolean protectedAlready=RestrictionTargets.domain(p,host);
     if(strict(p)&&protectedAlready&&!atLeastAsStrict(p,id,from))return false;
     carryToday(p,from,id);
     return p.edit().putString("group.domain."+host,id)

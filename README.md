@@ -2,6 +2,18 @@
 
 アプリとWebサイトの利用時間をまとめて管理する、Android向けのブロックアプリです。
 
+## スクリーンショット
+
+Pixel 10aで撮影したAndroid版の画面です。時計・通知バーとAndroidのシステム操作バーは取り除き、アプリ内メニューは残しています。
+
+<p align="center">
+  <img src="docs/images/home.png" width="160" alt="ホーム" />
+  <img src="docs/images/groups.png" width="160" alt="グループ管理" />
+  <img src="docs/images/new-apps.png" width="160" alt="新規アプリ制限" />
+  <img src="docs/images/strict-mode.png" width="160" alt="厳格モード" />
+  <img src="docs/images/settings.png" width="160" alt="設定" />
+</p>
+
 ## 制限対象の原則
 
 制限するアプリ・サイトは利用者が明示的に指定します。
@@ -83,6 +95,7 @@ python3 scripts/audit_public.py
 コミット前フックはステージ済み内容の秘密情報・個人情報の代表的パターンを検査します。
 既存コミットの確認には `python3 scripts/audit_public.py --ref HEAD` を使います。
 自動検査には検出限界があるため、差分も確認してください。
-端末IP、個人の設定バックアップ、スクリーンショット、実機ログ、署名鍵、ADB鍵はコミットしないでください。
+端末IP、個人の設定バックアップ、未加工のスクリーンショット、実機ログ、署名鍵、ADB鍵はコミットしないでください。
+README用の画像は個人情報・システム表示を取り除いたものに限り、監査スクリプトに登録した画像だけを公開します。
 
 Android版のみを管理するリポジトリです。

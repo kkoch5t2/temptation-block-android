@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Inspect staged blobs or a named commit; report paths/rules, never matched values."""
 import argparse
+import hashlib
 import re
 import subprocess
 import sys
@@ -47,6 +48,15 @@ bad_names = {"local.properties", "key.properties", "keystore.properties",
              "signing.properties", "google-services.json"}
 bad_extensions = {".apk", ".aab", ".apks", ".jks", ".keystore", ".p12", ".pfx",
                   ".pem", ".key", ".log", ".zip"}
+# Only these individually reviewed, app-only PNG assets may bypass the binary ban.
+# Update the hash only after visually reviewing the exact replacement image.
+approved_readme_images = {
+    "docs/images/groups.png": "2d4da857d61e65c68ca23652ee3eee0a0cefb2a77abb71aca9298b0f1c9e0b4b",
+    "docs/images/home.png": "b5b42dbd12537702408d34410122a147bbaead42b6ff2642e40da0de5fb127ca",
+    "docs/images/new-apps.png": "39832b72a3ed2e4f8a6bc7e6f3792214c11cf1520655cf61db90aea44507bb36",
+    "docs/images/settings.png": "3ea5058fbd26576f4dfe22b8cbcad721efee9371dca61402a0d9e0537c35a74a",
+    "docs/images/strict-mode.png": "3ef4fe5f402ee8e40c8167f8b00c771d4287948c5402b3587cebc6ae2daea2a3",
+}
 failures = []
 for name, oid, mode in entries:
     path = PurePosixPath(name)
@@ -60,6 +70,11 @@ for name, oid, mode in entries:
         failures.append((name, "non-regular-file"))
         continue
     data = git("cat-file", "blob", oid)
+    if name in approved_readme_images:
+        if (not data.startswith(b"\x89PNG\r\n\x1a\n")
+                or hashlib.sha256(data).hexdigest() != approved_readme_images[name]):
+            failures.append((name, "unapproved-documentation-image"))
+        continue
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:

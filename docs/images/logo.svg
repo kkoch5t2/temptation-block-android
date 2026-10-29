@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" role="img" aria-labelledby="title">
+<title id="title">誘惑ブロック</title>
+<rect width="108" height="108" rx="24" fill="#1A2F4C"/>
+<g transform="translate(54 54) scale(.76) translate(-54 -54)">
+<path d="M54,24 L78,33 L78,53 C78,68 66,79 54,85 C42,79 30,68 30,53 L30,33 Z" fill="#75E3C3"/>
+<path d="M54,40 A14,14 0,1 0,54,68 A14,14 0,1 0,54,40 M54,44 L54,54 L61,58" fill="none" stroke="#173B38" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</svg>

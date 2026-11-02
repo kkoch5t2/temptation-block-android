@@ -64,7 +64,12 @@ public class MainActivity extends GuardActivity {
     if(!"settings".equals(page)&&!"strict".equals(page)&&!"newapps".equals(page))page="home";
     render();
   }
-  @Override protected void onResume(){super.onResume();render();}
+  @Override protected void onResume(){
+    super.onResume();
+    AccessibilityCompatibility.restore(this);
+    AccessibilityCompatibility.startIfEnabled(this);
+    render();
+  }
   @Override protected void onStrictModeEnded(){render();}
   @Override protected void onSaveInstanceState(Bundle state){
     super.onSaveInstanceState(state);state.putString("page",page);
@@ -94,9 +99,7 @@ public class MainActivity extends GuardActivity {
     return b;
   }
   private boolean serviceEnabled(){
-    String enabled=Settings.Secure.getString(getContentResolver(),
-      Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-    return enabled!=null&&enabled.contains(getPackageName()+".GuardianService");
+    return AccessibilityCompatibility.ownEnabled(this);
   }
   private void chooseApps(){
     if(settingsLocked()){showLockedNotice();return;}
@@ -416,7 +419,56 @@ public class MainActivity extends GuardActivity {
           .setPositiveButton("OK",null).show();
       }).show();
   }
+  private void chooseCompatibilityTargets(){
+    java.util.Set<String> selected=AccessibilityCompatibility.targets(this);
+    java.util.TreeMap<String,String> apps=new java.util.TreeMap<>();
+    Intent launcher=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+    for(ResolveInfo item:getPackageManager().queryIntentActivities(launcher,0)){
+      String pkg=item.activityInfo.packageName;
+      if(AccessibilityCompatibility.allowedTarget(this,pkg)||selected.contains(pkg)){
+        String name=item.loadLabel(getPackageManager()).toString();
+        apps.put(name+" · "+pkg,pkg);
+      }
+    }
+    String[] names=apps.keySet().toArray(new String[0]);
+    String[] packages=apps.values().toArray(new String[0]);
+    boolean[] checked=new boolean[packages.length];
+    for(int i=0;i<packages.length;i++)checked[i]=selected.contains(packages[i]);
+    new AlertDialog.Builder(this).setTitle("ユーザー補助と併用できないアプリ")
+      .setMultiChoiceItems(names,checked,(dialog,index,value)->{
+        if(value)selected.add(packages[index]);else selected.remove(packages[index]);
+      })
+      .setPositiveButton("保存",(dialog,which)->{
+        if(!AccessibilityCompatibility.setTargets(this,selected))
+          new AlertDialog.Builder(this).setMessage("制限対象のアプリ・ブラウザ・新規アプリの使用禁止対象は登録できません。").setPositiveButton("OK",null).show();
+        render();
+      }).setNegativeButton("キャンセル",null).show();
+  }
   private void renderSettings(){
+    LinearLayout payment=card(ui.surface);
+    label(payment,"🔄 ユーザー補助との互換モード",18,ui.text,true);
+    label(payment,AccessibilityCompatibility.enabled(this)?"自動切り替え：オン":"自動切り替え：オフ",
+      16,ui.text,true).setPadding(0,d(10),0,d(8));
+    label(payment,"登録したアプリを開いている間だけブロックを一時停止し、離れると自動復帰します。画面ロック・判定失敗・5分経過でも復帰します。厳格モードの設定と使用時間は維持します。",
+      14,ui.muted,false).setPadding(0,0,0,d(10));
+    label(payment,"対象アプリ："+AccessibilityCompatibility.targets(this).size()+"件",14,ui.muted,false);
+    action(payment,"対象アプリを選ぶ",this::chooseCompatibilityTargets);
+    if(AccessibilityCompatibility.enabled(this))
+      action(payment,"対象アプリを開く",()->startActivity(new Intent(this,CompatibilityLaunchActivity.class)));
+    action(payment,AccessibilityCompatibility.enabled(this)?"自動切り替えをオフにする":"自動切り替えをオンにする",()->{
+      boolean value=!AccessibilityCompatibility.enabled(this);
+      if(value&&!AccessibilityCompatibility.ready(this)){
+        new AlertDialog.Builder(this).setTitle("初回の権限設定が必要です")
+          .setMessage("使用状況へのアクセスと、PCからの端末設定権限の付与が必要です。設定手順はREADMEのユーザー補助との互換モードを確認してください。")
+          .setPositiveButton("使用状況の設定を開く",(dialog,which)->startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)))
+          .setNegativeButton("閉じる",null).show();
+      }else if(value){
+        new AlertDialog.Builder(this).setTitle("互換モードの自動切り替えをオンにしますか？")
+          .setMessage("対象アプリの利用中はアプリ・サイトのブロックとPiP制限も一時停止します。離れるか5分経過で復帰します。端末設定の権限を解除したり、このアプリを強制停止した場合は自動復帰できないことがあります。")
+          .setPositiveButton("オンにする",(dialog,which)->{AccessibilityCompatibility.setEnabled(this,true);render();})
+          .setNegativeButton("キャンセル",null).show();
+      }else{AccessibilityCompatibility.setEnabled(this,false);render();}
+    });
     LinearLayout appearance=card(ui.surface);
     label(appearance,"🎨 表示",19,ui.text,true);
     TextView explanation=label(appearance,"明るさや配色を選べます",13,ui.muted,false);

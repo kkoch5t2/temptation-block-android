@@ -4,6 +4,8 @@ task_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$task_root"
 case "${1:-help}" in
   test-android)
+    python3 scripts/test_compatibility_switch.py
+    python3 scripts/test_accessibility_scope.py
     python3 scripts/test_core_rules.py
     python3 scripts/test_group_rules.py
     python3 scripts/test_duration_format.py

@@ -1,9 +1,6 @@
 package jp.personal.entertainmentguard;
 
 import android.accessibilityservice.AccessibilityService;
-import android.accessibilityservice.InputMethod;
-import android.view.KeyEvent;
-import android.view.KeyCharacterMap;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.content.Context;
@@ -51,6 +48,49 @@ public class GuardianService extends AccessibilityService {
   private Runnable blockingTicker;
   private WindowManager windowManager;
   private View currentOverlay;
+  private java.util.Set<String> scopePackages=java.util.Collections.emptySet();
+  private boolean scopeReceiverRegistered=false;
+  private final Runnable scopeRefresh=this::refreshAccessibilityScope;
+  private final SharedPreferences.OnSharedPreferenceChangeListener scopePreferenceListener=(p,key)->{
+    if(key==null||key.startsWith("app:")||key.equals("new_apps.enabled")
+        ||(key.startsWith("group.")&&!key.startsWith("group.used.")&&!key.startsWith("group.date.")))
+      {handler.removeCallbacks(scopeRefresh);handler.post(scopeRefresh);}
+  };
+  private final android.content.BroadcastReceiver scopeReceiver=new android.content.BroadcastReceiver(){
+    @Override public void onReceive(Context context,Intent intent){refreshAccessibilityScope();}
+  };
+  private void refreshAccessibilityScope(){
+    if(prefs==null)return;
+    java.util.Set<String> targets=new java.util.HashSet<>();
+    for(String key:prefs.getAll().keySet()){
+      String pkg=key.startsWith("app:")?key.substring(4):
+        key.startsWith("group.app.")?key.substring(10):null;
+      if(pkg!=null&&RestrictionTargets.activeKey(prefs,"app:"+pkg))targets.add(pkg);
+    }
+    if(NewAppRules.enabled(prefs)){
+      try{
+        for(android.content.pm.PackageInfo app:getPackageManager().getInstalledPackages(0)){
+          boolean system=app.applicationInfo!=null&&(app.applicationInfo.flags&
+            (android.content.pm.ApplicationInfo.FLAG_SYSTEM|android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;
+          if(!getPackageName().equals(app.packageName)
+              &&NewAppRules.blocked(prefs,app.packageName,app.firstInstallTime,system))
+            targets.add(app.packageName);
+        }
+      }catch(RuntimeException ignored){
+        // Keep previous subscriptions if a package update temporarily hides identities.
+        targets.addAll(scopePackages);
+      }
+    }
+    java.util.SortedSet<String> next=AccessibilityScope.packages(getPackageName(),targets);
+    android.accessibilityservice.AccessibilityServiceInfo info=getServiceInfo();
+    if(info==null)return;
+    String[] names=next.toArray(new String[0]);
+    if(!java.util.Arrays.equals(info.packageNames,names)){
+      info.packageNames=names;
+      setServiceInfo(info);
+    }
+    scopePackages=next;
+  }
   private final Runnable heartbeat=new Runnable(){
     @Override public void run(){
       long now=SystemClock.elapsedRealtime();
@@ -74,6 +114,19 @@ public class GuardianService extends AccessibilityService {
         .remove("penalty_until_ms")
         .putInt("usage_schema_version",2).apply();
     GroupRules.ensure(prefs);
+    refreshAccessibilityScope();
+    prefs.registerOnSharedPreferenceChangeListener(scopePreferenceListener);
+    if(!scopeReceiverRegistered){
+      android.content.IntentFilter filter=new android.content.IntentFilter();
+      filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+      filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+      filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+      filter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+      filter.addDataScheme("package");
+      if(android.os.Build.VERSION.SDK_INT>=33)registerReceiver(scopeReceiver,filter,Context.RECEIVER_NOT_EXPORTED);
+      else registerReceiver(scopeReceiver,filter);
+      scopeReceiverRegistered=true;
+    }
     prefs.edit().putLong("last_service_start",System.currentTimeMillis()).apply();
     windowManager=(WindowManager)getSystemService(WINDOW_SERVICE);
     long pendingUntil=prefs.getLong("penalty_until_ms",0);
@@ -82,6 +135,7 @@ public class GuardianService extends AccessibilityService {
     else if(pendingUntil>0)prefs.edit().remove("penalty_until_ms").apply();
     handler.removeCallbacks(heartbeat);
     handler.post(heartbeat);
+    AccessibilityCompatibility.startIfEnabled(this);
   }
   @Override public void onAccessibilityEvent(AccessibilityEvent event){
     if(event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED
@@ -99,6 +153,7 @@ public class GuardianService extends AccessibilityService {
           if(active.getPackageName()==null || !pkg.equals(active.getPackageName().toString()))return;
           CharSequence eventClass=event.getClassName();
           if(enforceNewApp(pkg))return;
+          if(!scopePackages.contains(pkg)){stopUsage();return;}
           restrictionPkg=restrictionPackage(active,pkg,eventClass==null?null:eventClass.toString());
         }finally{active.recycle();}
         String category=AppRules.category(restrictionPkg,prefs);
@@ -140,6 +195,7 @@ public class GuardianService extends AccessibilityService {
             CharSequence owner=root.getPackageName();
             if(owner==null||owner.length()==0)continue;
             String pipOwner=owner.toString();
+            if(!scopePackages.contains(pipOwner))continue;
             String pipIdentity=restrictionPackage(root,pipOwner,null);
             if(!RestrictionTargets.activeKey(prefs,"app:"+pipIdentity)
                 &&!NewAppGuard.blocked(this,prefs,pipOwner))continue;
@@ -163,6 +219,9 @@ public class GuardianService extends AccessibilityService {
   @Override public void onInterrupt(){}
   @Override public void onDestroy(){
     handler.removeCallbacks(heartbeat);
+    handler.removeCallbacks(scopeRefresh);
+    if(prefs!=null)prefs.unregisterOnSharedPreferenceChangeListener(scopePreferenceListener);
+    if(scopeReceiverRegistered){unregisterReceiver(scopeReceiver);scopeReceiverRegistered=false;}
     clearTimedBlock();
     clearOverlay();
     super.onDestroy();
@@ -301,6 +360,11 @@ public class GuardianService extends AccessibilityService {
       }
       String pkg=root.getPackageName().toString();
       if(enforceNewApp(pkg))return;
+      // Unselected apps need only their root owner to stop the previous usage
+      // timer. Do not inspect their view IDs, text, children or URLs.
+      if(!scopePackages.contains(pkg)){
+        stopUsage();trackingHost=null;activeBrowserUrl=null;activeBrowserPackage=null;return;
+      }
       String restrictionPkg=restrictionPackage(root,pkg,null);
       String appCategory=AppRules.category(restrictionPkg,prefs);
       if(appCategory!=null&&!isBrowser(pkg)){enforceLimit("app:"+restrictionPkg,appCategory,"アプリ");return;}
@@ -478,106 +542,31 @@ public class GuardianService extends AccessibilityService {
             active.getPackageName().toString(),active.getWindowId()))return;
         List<AccessibilityNodeInfo> bars=active.findAccessibilityNodeInfosByViewId(pkg+":id/url_bar");
         if(bars==null)return;
+        boolean submitted=false;
         for(AccessibilityNodeInfo bar:bars){
           try{
+            if(submitted)continue;
             android.os.Bundle args=new android.os.Bundle();
             args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"https://www.google.com/");
             if(!bar.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args))continue;
             boolean entered=android.os.Build.VERSION.SDK_INT>=30
               &&bar.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
-            if(android.os.Build.VERSION.SDK_INT>=33&&!entered){
-              InputMethod ime=getInputMethod();
-              InputMethod.AccessibilityInputConnection connection=ime==null?null:ime.getCurrentInputConnection();
-              if(connection!=null){
-                long now=SystemClock.uptimeMillis();
-                connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER,0));
-                connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER,0));
-              }
+            if(!entered){
+              // Use the browser's public navigation intent when its native Enter
+              // action is unavailable. No input-method access or injected keys.
+              Intent safe=new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/"));
+              safe.setPackage(pkg);
+              safe.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+              startActivity(safe);
             }
+            submitted=true;
           }finally{bar.recycle();}
         }
+      }catch(RuntimeException ignored){
+        // The scheduled foreground check still denies the original target.
       }finally{active.recycle();}
     },200);
     return true;
-  }
-
-  /** Attempt Chrome's native Ctrl+W shortcut on the active tab via Android accessibility IME. */
-  private boolean closeCurrentTabWithShortcut(String key,String category,String type){
-    if(android.os.Build.VERSION.SDK_INT<33 || closingBlockedTab || blockingOverlay!=null)
-      return false;
-    String pkg=activeBrowserPackage, url=activeBrowserUrl;
-    if(!"com.android.chrome".equals(pkg) || url==null)return false;
-    AccessibilityNodeInfo root=null;
-    int before=-1;
-    boolean focused=false;
-    try{
-      InputMethod ime=getInputMethod();
-      if(ime==null)return false;
-      root=getRootInActiveWindow();
-      if(root==null||root.getPackageName()==null||
-          !pkg.equals(root.getPackageName().toString())||
-          !url.equals(urlFromTree(root,pkg)))return false;
-      before=countChromeTabs(pkg,root);
-      if(before<=0)return false;
-      List<AccessibilityNodeInfo> fields=root.findAccessibilityNodeInfosByViewId(pkg+":id/url_bar");
-      if(fields==null||fields.isEmpty())return false;
-      focused=fields.get(0).performAction(AccessibilityNodeInfo.ACTION_CLICK);
-    }catch(Exception ignored){return false;}
-    finally{if(root!=null)root.recycle();}
-    if(!focused)return false;
-    closingBlockedTab=true;
-    final int previousTabs=before;
-    handler.postDelayed(()->{
-      boolean sent=false;
-      try{
-        InputMethod inputMethod=getInputMethod();
-        InputMethod.AccessibilityInputConnection conn=inputMethod==null
-          ?null:inputMethod.getCurrentInputConnection();
-        AccessibilityNodeInfo active=getRootInActiveWindow();
-        boolean inChrome=active!=null&&active.getPackageName()!=null&&
-          pkg.equals(active.getPackageName().toString());
-        if(active!=null)active.recycle();
-        if(conn!=null && inChrome){
-          long now=SystemClock.uptimeMillis();
-          int meta=KeyEvent.META_CTRL_ON|KeyEvent.META_CTRL_LEFT_ON;
-          int keyboard=KeyCharacterMap.VIRTUAL_KEYBOARD;
-          int flags=KeyEvent.FLAG_SOFT_KEYBOARD;
-          conn.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_CTRL_LEFT,0,meta,keyboard,0,flags));
-          conn.sendKeyEvent(new KeyEvent(now,now+1,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_W,0,meta,keyboard,0,flags));
-          conn.sendKeyEvent(new KeyEvent(now,now+2,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_W,0,meta,keyboard,0,flags));
-          conn.sendKeyEvent(new KeyEvent(now,now+3,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_CTRL_LEFT,0,0,keyboard,0,flags));
-          sent=true;
-        }
-      }catch(Exception ignored){}
-      prefs.edit().putString("tab_close_shortcut",sent?"sent":"no_connection").apply();
-      handler.postDelayed(()->{
-        AccessibilityNodeInfo check=null;
-        int after=-1;
-        try{check=getRootInActiveWindow();after=countChromeTabs(pkg,check);}
-        catch(Exception ignored){}finally{if(check!=null)check.recycle();}
-        closingBlockedTab=false;
-        if(after>=0 && after<previousTabs){
-          prefs.edit().putString("tab_close_stage","shortcut_closed").apply();
-          if(prefs.getInt("restriction_mode",0)==2)blockNow(key,category,type);
-          else timedBlock(key,category,type);
-        }else{
-          prefs.edit().putString("tab_close_shortcut","not_confirmed").apply();
-          closeViaSwitcherAndBlock(key,category,type);
-        }
-      },450);
-    },350);
-    return true;
-  }
-
-  private int countChromeTabs(String pkg,AccessibilityNodeInfo root){
-    if(root==null)return -1;
-    List<AccessibilityNodeInfo> b=root.findAccessibilityNodeInfosByViewId(
-      pkg+":id/tab_switcher_button");
-    if(b==null || b.isEmpty() || b.get(0).getContentDescription()==null)return -1;
-    java.util.regex.Matcher m=java.util.regex.Pattern.compile("(\\d+)")
-      .matcher(b.get(0).getContentDescription().toString());
-    if(!m.find())return -1;
-    try{return Integer.parseInt(m.group(1));}catch(Exception ignored){return -1;}
   }
 
   private boolean browserBlockKey(String key){

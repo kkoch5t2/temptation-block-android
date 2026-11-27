@@ -28,6 +28,7 @@ import java.util.HashSet;
 
 public class GuardianService extends AccessibilityService {
   private static final long CHECK_INTERVAL=1000;
+  private static final String BLOCK_HEADING="今日はもう使えません。遊んでないで集中しなさい。";
   private final Handler handler=new Handler(Looper.getMainLooper());
   private SharedPreferences prefs;
   private String trackingHost=null, trackingCategory=null, trackingPackage=null;
@@ -111,7 +112,7 @@ public class GuardianService extends AccessibilityService {
     // Clean up one-time prototype counters and the temporary full-screen test penalty.
     if(prefs.getInt("usage_schema_version",0)<2)
       prefs.edit().remove("usage_ms").remove("usage_date")
-        .remove("penalty_until_ms")
+        .remove("penalty_until_ms").remove("penalty_reason")
         .putInt("usage_schema_version",2).apply();
     GroupRules.ensure(prefs);
     refreshAccessibilityScope();
@@ -131,8 +132,8 @@ public class GuardianService extends AccessibilityService {
     windowManager=(WindowManager)getSystemService(WINDOW_SERVICE);
     long pendingUntil=prefs.getLong("penalty_until_ms",0);
     if(pendingUntil>System.currentTimeMillis())
-      showTimedBlock(prefs.getString("last_category","娯楽"),pendingUntil);
-    else if(pendingUntil>0)prefs.edit().remove("penalty_until_ms").apply();
+      showTimedBlock(prefs.getString("last_category","娯楽"),prefs.getString("penalty_reason",null),pendingUntil);
+    else if(pendingUntil>0)clearPenalty();
     handler.removeCallbacks(heartbeat);
     handler.post(heartbeat);
     AccessibilityCompatibility.startIfEnabled(this);
@@ -158,8 +159,8 @@ public class GuardianService extends AccessibilityService {
         }finally{active.recycle();}
         String category=AppRules.category(restrictionPkg,prefs);
         if(isBrowser(pkg))inspectVisibleBrowser();
-        else if(category!=null)enforceLimit("app:"+restrictionPkg,category,"アプリ");
-        else if(AppRules.unsupportedBrowser(pkg)){stopUsage();blockNow("browser:"+pkg,"未対応ブラウザ","抜け道");}
+        else if(category!=null)enforceLimit("app:"+restrictionPkg,category);
+        else if(AppRules.unsupportedBrowser(pkg)){stopUsage();blockNow("browser:"+pkg,"未対応ブラウザ",null);}
         else stopUsage();
       }
     }
@@ -367,7 +368,7 @@ public class GuardianService extends AccessibilityService {
       }
       String restrictionPkg=restrictionPackage(root,pkg,null);
       String appCategory=AppRules.category(restrictionPkg,prefs);
-      if(appCategory!=null&&!isBrowser(pkg)){enforceLimit("app:"+restrictionPkg,appCategory,"アプリ");return;}
+      if(appCategory!=null&&!isBrowser(pkg)){enforceLimit("app:"+restrictionPkg,appCategory);return;}
       if(!isBrowser(pkg)){stopUsage();resetIfStale();return;}
       String url=urlFromTree(root,pkg);
       if(remoteDesktopSurface(root,pkg,url)){
@@ -377,22 +378,22 @@ public class GuardianService extends AccessibilityService {
         // Remote Desktop restrictions still apply if the user selects that app.
         String remoteAppKey=remoteCategory!=null?"app:"+AppSurfaceRules.REMOTE_DESKTOP:null;
         String remoteSiteKey=isBlocked("remotedesktop.google.com")?"domain:remotedesktop.google.com":null;
-        if(remoteAppKey!=null||remoteSiteKey!=null)enforceBoth(remoteAppKey,remoteSiteKey,"Remote Desktop","アプリ");
+        if(remoteAppKey!=null||remoteSiteKey!=null)enforceBoth(remoteAppKey,remoteSiteKey,"Remote Desktop");
         else stopUsage();
         return;
       }
       activeBrowserUrl=url;
       activeBrowserPackage=pkg;
       if(url==null){
-        if(appCategory!=null)enforceLimit("app:"+restrictionPkg,appCategory,"ブラウザ");
+        if(appCategory!=null)enforceLimit("app:"+restrictionPkg,appCategory);
         else stopUsage();
         resetIfStale();return;
       }
       String host=Classifier.host(url);
       if(host!=null&&RestrictionTargets.domain(prefs,host)){
-        enforceBrowserLimit("domain:"+host,restrictionPkg,"指定サイト","Web");
+        enforceBrowserLimit("domain:"+host,restrictionPkg,"指定サイト");
       }else if(appCategory!=null){
-        enforceLimit("app:"+restrictionPkg,appCategory,"ブラウザ");
+        enforceLimit("app:"+restrictionPkg,appCategory);
       }else stopUsage();
       trackingHost=null;
     }catch(Exception ignored){
@@ -400,14 +401,14 @@ public class GuardianService extends AccessibilityService {
     }finally{if(root!=null)root.recycle();}
   }
   /** Supports overlapping browser-app and website budgets without suppressing either. */
-  private void enforceBrowserLimit(String siteKey,String pkg,String category,String type){
+  private void enforceBrowserLimit(String siteKey,String pkg,String category){
     String appKey=AppRules.category(pkg,prefs)!=null?"app:"+pkg:null;
-    enforceBoth(siteKey,appKey,category,type);
+    enforceBoth(siteKey,appKey,category);
   }
-  private void enforceLimit(String key,String category,String type){
-    enforceBoth(key,null,category,type);
+  private void enforceLimit(String key,String category){
+    enforceBoth(key,null,category);
   }
-  private void enforceBoth(String firstKey,String secondKey,String category,String type){
+  private void enforceBoth(String firstKey,String secondKey,String category){
     if(prefs==null||blockingOverlay!=null)return;
     java.util.LinkedHashMap<String,String> groups=new java.util.LinkedHashMap<>();
     for(String key:new String[]{firstKey,secondKey}){
@@ -444,12 +445,17 @@ public class GuardianService extends AccessibilityService {
       String id=entry.getKey();
       String key=entry.getValue();
       if(GroupRules.mode(prefs,id)==GroupRules.BLOCK){
-        stopUsage();blockAndCloseIfBrowser(key,category,type);return;
+        stopUsage();
+        blockAndCloseIfBrowser(key,category,"「"+GroupRules.name(prefs,id)+"」で常時禁止に設定されています。");
+        return;
       }
-      long budget=GroupRules.minutes(prefs,id)*60000L;
+      int minutes=GroupRules.minutes(prefs,id);
+      long budget=minutes*60_000L;
       long spent=GroupRules.todayUsed(prefs,id,today);
       if(UsageLimit.isExhausted(budget,spent)){
-        stopUsage();blockAndCloseIfBrowser(key,category,type);return;
+        stopUsage();
+        blockAndCloseIfBrowser(key,category,"「"+GroupRules.name(prefs,id)+"」の1日"+minutes+"分を使い切りました。");
+        return;
       }
       long remaining=UsageLimit.remainingSeconds(budget,spent);
       if(remaining<shortestRemaining){
@@ -472,7 +478,7 @@ public class GuardianService extends AccessibilityService {
   /** Leave a forbidden URL via the browser's normal HTTPS intent.
       Verify the visible URL changed before imposing the deterrent.
       On failure, fall back to tab switcher / close logic. */
-  private boolean redirectBlockedBrowser(String key,String category,String type){
+  private boolean redirectBlockedBrowser(String key,String category,String reason){
     if(closingBlockedTab || blockingOverlay!=null || activeBrowserPackage==null
         ||activeBrowserUrl==null
         ||!browserBlockKey(key))return false;
@@ -514,7 +520,7 @@ public class GuardianService extends AccessibilityService {
       closingBlockedTab=false;
       prefs.edit().putString("tab_close_stage",
         recovered?"redirect_confirmed":"redirect_unconfirmed").apply();
-      finishDeniedAccess(key,category,type);
+      finishDeniedAccess(key,category,reason);
     },2400);
     return true;
   }
@@ -605,19 +611,19 @@ public class GuardianService extends AccessibilityService {
         root.getPackageName().toString(),root.getWindowId());
     }finally{root.recycle();}
   }
-  private void blockAndCloseIfBrowser(String key,String category,String type){
+  private void blockAndCloseIfBrowser(String key,String category,String reason){
     if(!beginDeniedAccess(key))return;
     stopBlockedMedia(key);
-    if(redirectBlockedBrowser(key,category,type))return;
-    finishDeniedAccess(key,category,type);
+    if(redirectBlockedBrowser(key,category,reason))return;
+    finishDeniedAccess(key,category,reason);
   }
-  private void finishDeniedAccess(String key,String category,String type){
+  private void finishDeniedAccess(String key,String category,String reason){
     if(!deniedStillForeground(key)){
       prefs.edit().putString("tab_close_stage","cancelled_after_window_change").apply();
       return;
     }
-    if(prefs.getInt("restriction_mode",1)==2)blockNow(key,category,type);
-    else timedBlock(key,category,type);
+    if(prefs.getInt("restriction_mode",1)==2)blockNow(key,category,reason);
+    else timedBlock(key,category,reason);
   }
   private void stopBlockedMedia(String key){
     if(!key.startsWith("app:"))return;
@@ -631,14 +637,14 @@ public class GuardianService extends AccessibilityService {
   }
 
   /** Fallback: Chrome switches to a fresh safe tab; others close only when unique. */
-  private void closeViaSwitcherAndBlock(String key,String category,String type){
+  private void closeViaSwitcherAndBlock(String key,String category,String reason){
     if(closingBlockedTab || blockingOverlay!=null)return;
     prefs.edit().putString("tab_close_stage","entered").apply();
     String url=activeBrowserUrl, pkg=activeBrowserPackage;
     if(url==null || pkg==null || !isBrowser(pkg) ||
        !key.startsWith("domain:")){
-      if(prefs.getInt("restriction_mode",0)==2)blockNow(key,category,type);
-      else timedBlock(key,category,type);
+      if(prefs.getInt("restriction_mode",0)==2)blockNow(key,category,reason);
+      else timedBlock(key,category,reason);
       return;
     }
     AccessibilityNodeInfo root=null;
@@ -660,8 +666,8 @@ public class GuardianService extends AccessibilityService {
     }finally{if(root!=null)root.recycle();}
     if(!opened){
       prefs.edit().putString("tab_close_stage","switcher_not_opened").apply();
-      if(prefs.getInt("restriction_mode",0)==2)blockNow(key,category,type);
-      else timedBlock(key,category,type);
+      if(prefs.getInt("restriction_mode",0)==2)blockNow(key,category,reason);
+      else timedBlock(key,category,reason);
       return;
     }
     closingBlockedTab=true;
@@ -679,8 +685,8 @@ public class GuardianService extends AccessibilityService {
         :"no_tab_closed";
       prefs.edit().putString("tab_close_stage",status).apply();
       closingBlockedTab=false;
-      if(prefs.getInt("restriction_mode",0)==2)blockNow(key,category,type);
-      else timedBlock(key,category,type);
+      if(prefs.getInt("restriction_mode",0)==2)blockNow(key,category,reason);
+      else timedBlock(key,category,reason);
     },650);
   }
 
@@ -760,10 +766,10 @@ public class GuardianService extends AccessibilityService {
   }
 
   /** Show a full-screen deterrent for the selected duration. This NEVER unlocks the target. */
-  private void timedBlock(String key,String category,String type){
+  private void timedBlock(String key,String category,String reason){
     if(blockingOverlay!=null||!deniedStillForeground(key))return;
     int seconds=CooldownSettings.seconds(prefs);
-    if(seconds==0){blockNow(key,category,type);return;}
+    if(seconds==0){blockNow(key,category,reason);return;}
     long now=System.currentTimeMillis();
     long until=CooldownPolicy.deadline(now,seconds);
     prefs.edit()
@@ -771,13 +777,14 @@ public class GuardianService extends AccessibilityService {
       .putLong("last_block",now)
       .putString("last_category",category)
       .putLong("penalty_until_ms",until)
+      .putString("penalty_reason",reason)
       .apply();
     clearOverlay();
     stopUsage();
     performGlobalAction(GLOBAL_ACTION_HOME);
-    showTimedBlock(category,until);
+    showTimedBlock(category,reason,until);
   }
-  private void showTimedBlock(String category,long until){
+  private void showTimedBlock(String category,String reason,long until){
     clearTimedBlock();
     final LinearLayout panel=new LinearLayout(this);
     panel.setOrientation(LinearLayout.VERTICAL);
@@ -789,13 +796,13 @@ public class GuardianService extends AccessibilityService {
     int pad=(int)(getResources().getDisplayMetrics().density*24);
     panel.setPadding(pad,pad,pad,pad);
     TextView heading=new TextView(this);
-    heading.setText("今日はもう使えません。遊んでないで集中しなさい。");
+    heading.setText(BLOCK_HEADING);
     heading.setTextColor(Color.WHITE);
     heading.setTextSize(26);
     heading.setGravity(Gravity.CENTER);
     panel.addView(heading);
     TextView categoryText=new TextView(this);
-    categoryText.setText(category+"は現在使用できません。\n時間が過ぎても使用許可にはなりません。");
+    categoryText.setText(reason!=null?reason:category+"は現在使用できません。");
     categoryText.setTextColor(Color.LTGRAY);
     categoryText.setTextSize(18);
     categoryText.setGravity(Gravity.CENTER);
@@ -829,7 +836,7 @@ public class GuardianService extends AccessibilityService {
           if(blockingOverlay!=panel)return;
           long remaining=CooldownPolicy.remainingSeconds(System.currentTimeMillis(),until);
           if(remaining<=0){
-            prefs.edit().remove("penalty_until_ms").apply();
+            clearPenalty();
             clearTimedBlock();
             performGlobalAction(GLOBAL_ACTION_HOME);
             return;
@@ -843,9 +850,12 @@ public class GuardianService extends AccessibilityService {
     }catch(Exception ignored){
       // Overlay failure must never grant access to a denied app.
       blockingOverlay=null;
-      prefs.edit().remove("penalty_until_ms").apply();
+      clearPenalty();
       performGlobalAction(GLOBAL_ACTION_HOME);
     }
+  }
+  private void clearPenalty(){
+    prefs.edit().remove("penalty_until_ms").remove("penalty_reason").apply();
   }
   private void clearTimedBlock(){
     if(blockingTicker!=null)handler.removeCallbacks(blockingTicker);
@@ -855,7 +865,7 @@ public class GuardianService extends AccessibilityService {
     }
     blockingOverlay=null;
   }
-  private void blockNow(String key,String category,String type){
+  private void blockNow(String key,String category,String reason){
     if(!deniedStillForeground(key))return;
     stopUsage();
     long now=SystemClock.elapsedRealtime();
@@ -866,7 +876,7 @@ public class GuardianService extends AccessibilityService {
         .putLong("last_block",System.currentTimeMillis())
         .putString("last_category",category)
         .apply();
-      showWarning("⛔ 今日はもう使えません。遊んでないで集中しなさい。");
+      showWarning("⛔ "+BLOCK_HEADING+(reason==null?"":"\n"+reason));
     }
     // No waiting screen must still deny every attempt, including rapid reopens.
     performGlobalAction(GLOBAL_ACTION_HOME);

@@ -23,8 +23,10 @@ import android.view.WindowManager;
 import android.widget.TextView;
 import android.widget.LinearLayout;
 import android.widget.Button;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.HashSet;
+import java.util.Map;
 
 public class GuardianService extends AccessibilityService {
   private static final long CHECK_INTERVAL=1000;
@@ -34,7 +36,7 @@ public class GuardianService extends AccessibilityService {
   private boolean trackingStrong=false;
   private long trackingStarted=0, lastSeen=0, lastBlockedAction=0, lastWarning=0, lastHeartbeat=0;
   private final java.util.Set<String> usageGroups=new java.util.HashSet<>();
-  private long usageLastTick=0, usageWarningAt=0;
+  private long usageLastTick=0;
   private boolean closingBlockedTab=false;
   private String deniedKey=null,deniedOwner=null;
   private int deniedWindow=-1;
@@ -409,7 +411,7 @@ public class GuardianService extends AccessibilityService {
   }
   private void enforceBoth(String firstKey,String secondKey,String category,String type){
     if(prefs==null||blockingOverlay!=null)return;
-    java.util.LinkedHashMap<String,String> groups=new java.util.LinkedHashMap<>();
+    Map<String,String> groups=new LinkedHashMap<>();
     for(String key:new String[]{firstKey,secondKey}){
       if(key==null)continue;
       String id=GroupRules.DEFAULT;
@@ -438,9 +440,8 @@ public class GuardianService extends AccessibilityService {
     usageGroups.clear();
     if(interactive)usageGroups.addAll(groups.keySet());
     usageLastTick=interactive&&!groups.isEmpty()?now:0;
-    long shortestRemaining=Long.MAX_VALUE;
-    String shortestName=null, shortestTime=null;
-    for(java.util.Map.Entry<String,String> entry:groups.entrySet()){
+    Map<String,Integer> warnings=null;
+    for(Map.Entry<String,String> entry:groups.entrySet()){
       String id=entry.getKey();
       String key=entry.getValue();
       if(GroupRules.mode(prefs,id)==GroupRules.BLOCK){
@@ -451,18 +452,28 @@ public class GuardianService extends AccessibilityService {
       if(UsageLimit.isExhausted(budget,spent)){
         stopUsage();blockAndCloseIfBrowser(key,category,type);return;
       }
-      long remaining=UsageLimit.remainingSeconds(budget,spent);
-      if(remaining<shortestRemaining){
-        shortestRemaining=remaining;
-        shortestName=GroupRules.name(prefs,id);
-        shortestTime=UsageLimit.formatRemaining(budget,spent);
+      if(interactive){
+        int threshold=UsageLimit.warningMinutes(budget,spent,GroupRules.todayWarningMinutes(prefs,id,today));
+        if(threshold>0){
+          if(warnings==null)warnings=new LinkedHashMap<>();
+          warnings.put(id,threshold);
+        }
       }
     }
-    if(interactive && shortestName!=null &&
-        (usageWarningAt==0||now-usageWarningAt>=3600000L)){
-      usageWarningAt=now;
-      showWarning("⏱ "+shortestName+"：残り "+shortestTime);
+    if(warnings!=null)showUsageWarnings(warnings,today);
+  }
+  private void showUsageWarnings(Map<String,Integer> warnings,String day){
+    SharedPreferences.Editor edit=prefs.edit();
+    StringBuilder message=new StringBuilder();
+    for(Map.Entry<String,Integer> entry:warnings.entrySet()){
+      String id=entry.getKey();
+      int minutes=entry.getValue();
+      if(message.length()>0)message.append('\n');
+      message.append("⏱ ").append(GroupRules.name(prefs,id)).append("：残り")
+        .append(minutes).append("分以内");
+      GroupRules.saveWarning(edit,id,day,minutes);
     }
+    if(showWarning(message.toString()))edit.apply();
   }
   private void stopUsage(){
     usageGroups.clear();
@@ -895,7 +906,7 @@ public class GuardianService extends AccessibilityService {
   private boolean isBlocked(String host){
     return RestrictionTargets.domain(prefs,host);
   }
-  private void showWarning(String message){
+  private boolean showWarning(String message){
     clearOverlay();
     TextView text=new TextView(this);
     text.setText(message);
@@ -916,8 +927,9 @@ public class GuardianService extends AccessibilityService {
     );
     p.gravity=Gravity.TOP;
     try{windowManager.addView(text,p);currentOverlay=text;}
-    catch(Exception ignored){}
+    catch(Exception ignored){return false;}
     handler.postDelayed(()->{if(currentOverlay==text)clearOverlay();},5500);
+    return true;
   }
   private void clearOverlay(){
     if(currentOverlay!=null&&windowManager!=null){

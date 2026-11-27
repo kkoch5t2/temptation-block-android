@@ -21,21 +21,25 @@ public final class UsageLimitTest {
     ok(UsageLimit.accrue(5000,0,600000)==5000,"Do not accrue when closed");
     ok(UsageLimit.accrue(0,40000,600000)==2000,"Clamp background gap");
     long hour=60*60_000L;
-    int previousWarning=0;
-    for(int threshold:new int[]{30,10,5,3}){
+    for(int threshold:new int[]{30,10,5,3,1}){
       long usedAtThreshold=hour-threshold*60_000L;
-      ok(UsageLimit.warningMinutes(hour,usedAtThreshold-1,previousWarning)==0,
+      ok(UsageLimit.warningMinutes(hour,usedAtThreshold-2,usedAtThreshold-1)==0,
         "No early reminder before "+threshold+" minutes");
-      ok(UsageLimit.warningMinutes(hour,usedAtThreshold,previousWarning)==threshold,
+      ok(UsageLimit.warningMinutes(hour,usedAtThreshold-1,usedAtThreshold)==threshold,
         "Reminder at "+threshold+" minutes");
-      ok(UsageLimit.warningMinutes(hour,usedAtThreshold+1,threshold)==0,
-        "Do not repeat the "+threshold+" minute reminder");
-      previousWarning=threshold;
+      ok(UsageLimit.warningMinutes(hour,usedAtThreshold-1,usedAtThreshold+1)==threshold,
+        "Reminder when a tick crosses "+threshold+" minutes");
+      ok(UsageLimit.warningMinutes(hour,usedAtThreshold,usedAtThreshold+1)==0,
+        "No repeat after crossing "+threshold+" minutes");
+      ok(UsageLimit.warningMinutes(hour,usedAtThreshold+1,usedAtThreshold+1)==0,
+        "No reminder when opening below "+threshold+" minutes");
     }
-    ok(UsageLimit.warningMinutes(600_000,0,0)==10,"Ten minute group can warn at entry");
-    ok(UsageLimit.warningMinutes(60_000,0,0)==0,"Skip milestones above the group allowance");
-    ok(UsageLimit.warningMinutes(hour,hour-4*60_000L,0)==5,"Use the closest threshold when several were passed");
-    ok(UsageLimit.warningMinutes(hour,hour,0)==0,"Blocking takes priority at exhaustion");
+    ok(UsageLimit.warningMinutes(600_000,0,0)==0,"Opening alone does not display a reminder");
+    ok(UsageLimit.warningMinutes(600_000,0,1000)==10,"Ten minute group warns when usage starts");
+    ok(UsageLimit.warningMinutes(60_000,0,1000)==1,"One minute group warns when usage starts");
+    ok(UsageLimit.warningMinutes(60_000,1000,2000)==0,"Ignore milestones above the group allowance");
+    ok(UsageLimit.warningMinutes(120_000,59_999,60_000)==1,"One minute threshold after changing the allowance");
+    ok(UsageLimit.warningMinutes(hour,hour-1000,hour)==0,"Blocking takes priority at exhaustion");
     long deadline=CooldownPolicy.deadline(100000);
     ok(deadline==130000,"Penalty lasts 30s");
     ok(CooldownPolicy.waiting(100000,deadline),"Penalty starts active");

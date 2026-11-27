@@ -4,7 +4,7 @@ package jp.personal.entertainmentguard;
 public final class UsageLimit {
   private UsageLimit(){}
   public static final int[] MINUTE_OPTIONS={1,3,5,10,15,30,60};
-  private static final int[] WARNING_MINUTES={3,5,10,30};
+  private static final int[] WARNING_MINUTES={1,3,5,10,30};
   public static boolean validMinutes(int minutes){
     for(int n:MINUTE_OPTIONS)if(n==minutes)return true;
     return false;
@@ -26,14 +26,17 @@ public final class UsageLimit {
     int seconds=remainingSeconds(budgetMs,usedMs);
     return (seconds/3600)+"時間"+((seconds%3600)/60)+"分"+(seconds%60)+"秒";
   }
-  /** Return the closest reached milestone that has not been shown today. */
-  public static int warningMinutes(long budgetMs,long usedMs,int lastWarningMinutes){
-    long remainingMs=budgetMs-Math.max(0,usedMs);
-    if(remainingMs<=0)return 0;
+  /** Find a milestone reached as the current use consumes the remaining allowance. */
+  public static int warningMinutes(long budgetMs,long beforeUsedMs,long afterUsedMs){
+    if(afterUsedMs<=beforeUsedMs||isExhausted(budgetMs,afterUsedMs))return 0;
+    long beforeRemaining=budgetMs-beforeUsedMs;
+    long afterRemaining=budgetMs-afterUsedMs;
     for(int minutes:WARNING_MINUTES){
       long thresholdMs=minutes*60_000L;
-      if(thresholdMs<=budgetMs&&remainingMs<=thresholdMs)
-        return lastWarningMinutes==0||minutes<lastWarningMinutes?minutes:0;
+      // When the entire allowance equals a milestone, notify as usage begins.
+      boolean startsAtThreshold=beforeUsedMs==0&&budgetMs==thresholdMs;
+      if(afterRemaining<=thresholdMs&&(beforeRemaining>thresholdMs||startsAtThreshold))
+        return minutes;
     }
     return 0;
   }

@@ -424,6 +424,7 @@ public class GuardianService extends AccessibilityService {
     PowerManager pm=(PowerManager)getSystemService(Context.POWER_SERVICE);
     if(pm!=null)interactive=pm.isInteractive();
     String today=new SimpleDateFormat("yyyyMMdd",Locale.US).format(new Date());
+    StringBuilder warning=null;
     if(interactive && usageLastTick>0 && now>=usageLastTick){
       long delta=now-usageLastTick;
       for(String previous:new java.util.HashSet<>(usageGroups)){
@@ -432,15 +433,21 @@ public class GuardianService extends AccessibilityService {
         long budget=GroupRules.minutes(prefs,previous)*60000L;
         long spent=GroupRules.todayUsed(prefs,previous,today);
         long updated=UsageLimit.accrue(spent,delta,budget);
-        if(updated!=spent)
-          prefs.edit().putString(GroupRules.dateKey(previous),today)
-            .putLong(GroupRules.usedKey(previous),updated).apply();
+        if(updated==spent)continue;
+        prefs.edit().putString(GroupRules.dateKey(previous),today)
+          .putLong(GroupRules.usedKey(previous),updated).apply();
+        if(!groups.containsKey(previous))continue;
+        int threshold=UsageLimit.warningMinutes(budget,spent,updated);
+        if(threshold==0)continue;
+        if(warning==null)warning=new StringBuilder();
+        else warning.append('\n');
+        warning.append("⏱ ").append(GroupRules.name(prefs,previous)).append("：残り")
+          .append(threshold).append("分以内");
       }
     }
     usageGroups.clear();
     if(interactive)usageGroups.addAll(groups.keySet());
     usageLastTick=interactive&&!groups.isEmpty()?now:0;
-    Map<String,Integer> warnings=null;
     for(Map.Entry<String,String> entry:groups.entrySet()){
       String id=entry.getKey();
       String key=entry.getValue();
@@ -452,28 +459,8 @@ public class GuardianService extends AccessibilityService {
       if(UsageLimit.isExhausted(budget,spent)){
         stopUsage();blockAndCloseIfBrowser(key,category,type);return;
       }
-      if(interactive){
-        int threshold=UsageLimit.warningMinutes(budget,spent,GroupRules.todayWarningMinutes(prefs,id,today));
-        if(threshold>0){
-          if(warnings==null)warnings=new LinkedHashMap<>();
-          warnings.put(id,threshold);
-        }
-      }
     }
-    if(warnings!=null)showUsageWarnings(warnings,today);
-  }
-  private void showUsageWarnings(Map<String,Integer> warnings,String day){
-    SharedPreferences.Editor edit=prefs.edit();
-    StringBuilder message=new StringBuilder();
-    for(Map.Entry<String,Integer> entry:warnings.entrySet()){
-      String id=entry.getKey();
-      int minutes=entry.getValue();
-      if(message.length()>0)message.append('\n');
-      message.append("⏱ ").append(GroupRules.name(prefs,id)).append("：残り")
-        .append(minutes).append("分以内");
-      GroupRules.saveWarning(edit,id,day,minutes);
-    }
-    if(showWarning(message.toString()))edit.apply();
+    if(warning!=null)showWarning(warning.toString());
   }
   private void stopUsage(){
     usageGroups.clear();
@@ -906,7 +893,7 @@ public class GuardianService extends AccessibilityService {
   private boolean isBlocked(String host){
     return RestrictionTargets.domain(prefs,host);
   }
-  private boolean showWarning(String message){
+  private void showWarning(String message){
     clearOverlay();
     TextView text=new TextView(this);
     text.setText(message);
@@ -927,9 +914,8 @@ public class GuardianService extends AccessibilityService {
     );
     p.gravity=Gravity.TOP;
     try{windowManager.addView(text,p);currentOverlay=text;}
-    catch(Exception ignored){return false;}
+    catch(Exception ignored){}
     handler.postDelayed(()->{if(currentOverlay==text)clearOverlay();},5500);
-    return true;
   }
   private void clearOverlay(){
     if(currentOverlay!=null&&windowManager!=null){

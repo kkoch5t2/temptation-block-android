@@ -180,13 +180,6 @@ public final class GroupRules {
   public static long todayUsed(SharedPreferences p,String id,String day){
     return day.equals(p.getString(dateKey(id),""))?p.getLong(usedKey(id),0):0;
   }
-  static int todayWarningMinutes(SharedPreferences p,String id,String day){
-    return day.equals(p.getString("usage_warning_date."+id,""))
-      ?p.getInt("usage_warning_minutes."+id,0):0;
-  }
-  static void saveWarning(SharedPreferences.Editor edit,String id,String day,int minutes){
-    edit.putString("usage_warning_date."+id,day).putInt("usage_warning_minutes."+id,minutes);
-  }
   /** True when the destination allows no more access than the source. */
   public static boolean atLeastAsStrict(SharedPreferences p,String target,String source){
     if(!exists(p,target)||!exists(p,source))return false;
@@ -267,8 +260,7 @@ public final class GroupRules {
     SharedPreferences.Editor edit=p.edit();
     edit.putString("group.ids",String.join(",",all));
     edit.remove("group.name."+id).remove("group.mode."+id)
-      .remove("group.minutes."+id).remove("group.enabled."+id)
-      .remove("usage_warning_date."+id).remove("usage_warning_minutes."+id);
+      .remove("group.minutes."+id).remove("group.enabled."+id);
     for(String k:p.getAll().keySet()){
       if(k.startsWith("group.app.")||k.startsWith("group.domain.")){
         if(id.equals(p.getAll().get(k)))edit.remove(k);

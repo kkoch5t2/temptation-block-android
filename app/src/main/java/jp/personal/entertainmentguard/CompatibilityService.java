@@ -42,6 +42,8 @@ public class CompatibilityService extends Service {
     if(!AccessibilityCompatibility.enabled(this)){
       AccessibilityCompatibility.restore(this);stopSelf();return START_NOT_STICKY;
     }
+    if(AccessibilityCompatibility.startFailed(this))
+      AccessibilityCompatibility.prefs(this).edit().putString("status","monitoring").apply();
     handler.removeCallbacks(tick);
     handler.post(tick);
     return START_STICKY;

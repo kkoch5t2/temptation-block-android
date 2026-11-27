@@ -4,7 +4,7 @@ package jp.personal.entertainmentguard;
 public final class UsageLimit {
   private UsageLimit(){}
   public static final int[] MINUTE_OPTIONS={1,3,5,10,15,30,60};
-  private static final int[] WARNING_MINUTES={1,3,5,10,30};
+  private static final int[] WARNING_MINUTES={1,3,5,10,30,60};
   public static boolean validMinutes(int minutes){
     for(int n:MINUTE_OPTIONS)if(n==minutes)return true;
     return false;

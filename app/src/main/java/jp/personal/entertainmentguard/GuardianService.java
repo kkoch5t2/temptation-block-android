@@ -442,7 +442,7 @@ public class GuardianService extends AccessibilityService {
         if(warning==null)warning=new StringBuilder();
         else warning.append('\n');
         warning.append("⏱ ").append(GroupRules.name(prefs,previous)).append("：残り")
-          .append(threshold).append("分以内");
+          .append(threshold==60?"1時間":threshold+"分").append("以内");
       }
     }
     usageGroups.clear();

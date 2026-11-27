@@ -11,6 +11,8 @@ import java.util.List;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.graphics.Color;
 import android.view.ViewGroup;
@@ -25,7 +27,21 @@ import java.util.Locale;
 import java.text.SimpleDateFormat;
 
 public class MainActivity extends GuardActivity {
+  private enum MonitoringState {
+    RUNNING, PAUSED, RESTORE_FAILED, DISABLED, CONNECTING, COMPAT_PERMISSIONS, COMPAT_START_FAILED
+  }
+
   private LinearLayout layout;
+  private LinearLayout monitoringStatusPanel;
+  private MonitoringState displayedMonitoringState;
+  private boolean monitoringStatusOnHome;
+  private final Handler monitoringHandler=new Handler(Looper.getMainLooper());
+  private final Runnable refreshMonitoring=new Runnable(){
+    @Override public void run(){
+      updateMonitoringStatus();
+      monitoringHandler.postDelayed(this,1000);
+    }
+  };
   private SharedPreferences prefs;
   private String page="home";
   private int d(float dp){return (int)(getResources().getDisplayMetrics().density*dp);}
@@ -69,6 +85,11 @@ public class MainActivity extends GuardActivity {
     AccessibilityCompatibility.restore(this);
     AccessibilityCompatibility.startIfEnabled(this);
     render();
+    monitoringHandler.post(refreshMonitoring);
+  }
+  @Override protected void onPause(){
+    monitoringHandler.removeCallbacks(refreshMonitoring);
+    super.onPause();
   }
   @Override protected void onStrictModeEnded(){render();}
   @Override protected void onSaveInstanceState(Bundle state){
@@ -98,8 +119,83 @@ public class MainActivity extends GuardActivity {
     layout.addView(b,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
     return b;
   }
-  private boolean serviceEnabled(){
-    return AccessibilityCompatibility.ownEnabled(this);
+  private MonitoringState monitoringState(){
+    if(AccessibilityCompatibility.suspended(this))
+      return AccessibilityCompatibility.restoreFailed(this)?MonitoringState.RESTORE_FAILED:MonitoringState.PAUSED;
+    if(!AccessibilityCompatibility.ownEnabled(this))return MonitoringState.DISABLED;
+    if(!GuardianService.isConnected())return MonitoringState.CONNECTING;
+    if(AccessibilityCompatibility.enabled(this)){
+      if(!AccessibilityCompatibility.ready(this))return MonitoringState.COMPAT_PERMISSIONS;
+      if(AccessibilityCompatibility.startFailed(this))return MonitoringState.COMPAT_START_FAILED;
+    }
+    return MonitoringState.RUNNING;
+  }
+  private void openAccessibilitySettings(){
+    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+  }
+  private void showCompatibilityPermissions(){
+    boolean usageMissing=!AccessibilityCompatibility.usagePermission(this);
+    boolean secureMissing=!AccessibilityCompatibility.securePermission(this);
+    StringBuilder message=new StringBuilder();
+    if(usageMissing)message.append("Androidの「使用状況へのアクセス」で誘惑ブロックを許可してください。");
+    if(secureMissing){
+      if(message.length()>0)message.append("\n\n");
+      message.append("ADBで接続したPCから、端末設定の権限を付与してください。\n\n")
+        .append("adb shell pm grant ").append(getPackageName())
+        .append(" android.permission.WRITE_SECURE_SETTINGS");
+    }
+    if(message.length()==0)return;
+    AlertDialog.Builder dialog=new AlertDialog.Builder(this)
+      .setTitle("互換モードの権限設定").setMessage(message).setNegativeButton("閉じる",null);
+    if(usageMissing)dialog.setPositiveButton("使用状況の設定を開く",
+      (ignored,which)->startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)));
+    dialog.show();
+  }
+  private void addMonitoringStatus(LinearLayout parent,boolean onHome){
+    monitoringStatusPanel=new LinearLayout(this);
+    monitoringStatusPanel.setOrientation(LinearLayout.VERTICAL);
+    parent.addView(monitoringStatusPanel);
+    monitoringStatusOnHome=onHome;
+    updateMonitoringStatus();
+  }
+  private void updateMonitoringStatus(){
+    if(monitoringStatusPanel==null)return;
+    MonitoringState state=monitoringState();
+    if(state==displayedMonitoringState)return;
+    displayedMonitoringState=state;
+    monitoringStatusPanel.removeAllViews();
+    String status=switch(state){
+      case RUNNING -> "🟢 監視中";
+      case PAUSED -> "🟡 互換モードで一時停止中";
+      case RESTORE_FAILED -> "🔴 監視の自動復帰に失敗しました";
+      case DISABLED -> "🔴 ユーザー補助がオフです";
+      case CONNECTING -> "🟡 監視サービスに未接続";
+      case COMPAT_PERMISSIONS -> "🟡 監視中 · 互換モードに権限が必要";
+      case COMPAT_START_FAILED -> "🟡 監視中 · 互換モードの起動に失敗";
+    };
+    int color=monitoringStatusOnHome
+      ?(state==MonitoringState.RUNNING?Color.rgb(121,230,184):Color.rgb(255,187,133))
+      :(state==MonitoringState.RUNNING?ui.success:ui.danger);
+    label(monitoringStatusPanel,status,monitoringStatusOnHome?17:15,color,true)
+      .setPadding(0,d(12),0,d(8));
+    switch(state){
+      case PAUSED -> action(monitoringStatusPanel,"監視を再開",()->{
+        AccessibilityCompatibility.restore(this);
+        updateMonitoringStatus();
+      });
+      case RESTORE_FAILED -> action(monitoringStatusPanel,"設定で誘惑ブロックをオンにする",
+        this::openAccessibilitySettings);
+      case DISABLED,CONNECTING -> action(monitoringStatusPanel,"ユーザー補助の設定を開く",
+        this::openAccessibilitySettings);
+      case COMPAT_PERMISSIONS -> action(monitoringStatusPanel,"互換モードの権限を確認",
+        this::showCompatibilityPermissions);
+      case COMPAT_START_FAILED -> action(monitoringStatusPanel,"互換モードを再試行",
+        ()->AccessibilityCompatibility.startIfEnabled(this));
+      case RUNNING -> {
+        if(!monitoringStatusOnHome)
+          action(monitoringStatusPanel,"ユーザー補助の設定を開く",this::openAccessibilitySettings);
+      }
+    }
   }
   private void chooseApps(){
     if(settingsLocked()){showLockedNotice();return;}
@@ -290,23 +386,19 @@ public class MainActivity extends GuardActivity {
     parent.addView(b,actionParams());
   }
   private void render(){
+    monitoringStatusPanel=null;
+    displayedMonitoringState=null;
     layout=createScreen("main:"+page,"settings".equals(page)?"設定":
       "strict".equals(page)?"厳格モード":"newapps".equals(page)?"新しく入れたアプリ":getString(R.string.app_name),
       !"home".equals(page),page);
     if("settings".equals(page)){renderSettings();return;}
     if("strict".equals(page)){renderStrict();return;}
     if("newapps".equals(page)){renderNewApps();return;}
-    int navy=ui.text,muted=ui.muted;
-    boolean enabled=serviceEnabled(),locked=settingsLocked();
     LinearLayout hero=card(Color.rgb(26,47,76));
     label(hero,"🎯 今日の集中を守る",23,Color.WHITE,true);
-    TextView status=label(hero,enabled?"🟢 監視中":"🔴 監視が停止しています",
-      17,enabled?Color.rgb(121,230,184):Color.rgb(255,187,133),true);
-    status.setPadding(0,d(14),0,d(8));
-    TextView restrictionStatus=label(hero,locked?"🔒 設定固定中":"グループ別に制限を設定",
+    addMonitoringStatus(hero,true);
+    label(hero,settingsLocked()?"🔒 設定固定中":"グループ別に制限を設定",
       14,Color.rgb(199,218,237),false);
-    if(!enabled)action(hero,"監視の設定を開く",()->
-      startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     LinearLayout summary=card(ui.surface);
     int active=0;for(String id:GroupRules.ids(prefs))if(GroupRules.enabled(prefs,id))active++;
     label(summary,"📊 制限のサマリ",18,ui.text,true);
@@ -458,10 +550,7 @@ public class MainActivity extends GuardActivity {
     action(payment,AccessibilityCompatibility.enabled(this)?"自動切り替えをオフにする":"自動切り替えをオンにする",()->{
       boolean value=!AccessibilityCompatibility.enabled(this);
       if(value&&!AccessibilityCompatibility.ready(this)){
-        new AlertDialog.Builder(this).setTitle("初回の権限設定が必要です")
-          .setMessage("使用状況へのアクセスと、PCからの端末設定権限の付与が必要です。設定手順はREADMEのユーザー補助との互換モードを確認してください。")
-          .setPositiveButton("使用状況の設定を開く",(dialog,which)->startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)))
-          .setNegativeButton("閉じる",null).show();
+        showCompatibilityPermissions();
       }else if(value){
         new AlertDialog.Builder(this).setTitle("互換モードの自動切り替えをオンにしますか？")
           .setMessage("対象アプリの利用中はアプリ・サイトのブロックとPiP制限も一時停止します。離れるか5分経過で復帰します。端末設定の権限を解除したり、このアプリを強制停止した場合は自動復帰できないことがあります。")
@@ -503,12 +592,9 @@ public class MainActivity extends GuardActivity {
     if(settingsLocked())label(rules,"🔒 制限設定は固定されています",13,ui.muted,false);
     LinearLayout monitoring=card(ui.surface);
     label(monitoring,"👀 監視",19,ui.text,true);
-    TextView state=label(monitoring,serviceEnabled()?"🟢 監視中":"🔴 監視停止中",15,
-      serviceEnabled()?ui.success:ui.danger,true);state.setPadding(0,d(12),0,d(10));
+    addMonitoringStatus(monitoring,false);
     TextView blocked=label(monitoring,"遮断回数（累計）："+prefs.getInt("blocked_total",0)+"回",14,ui.muted,false);
     blocked.setPadding(0,0,0,d(12));
-    action(monitoring,"ユーザー補助の設定",()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-    action(monitoring,"状態を更新",this::render);
     LinearLayout help=card(ui.surface);label(help,"📖 使い方",19,ui.text,true);
     TextView detail=label(help,"• 下のナビからホーム・グループ・厳格・設定へ移動\n"+
       "• 戻るボタン、Androidの戻るジェスチャーに対応\n"+

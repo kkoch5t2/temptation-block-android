@@ -30,6 +30,10 @@ public class GuardianService extends AccessibilityService {
   private static final long CHECK_INTERVAL=1000;
   private final Handler handler=new Handler(Looper.getMainLooper());
   private SharedPreferences prefs;
+  private static boolean connected;
+
+  static boolean isConnected(){return connected;}
+
   private String trackingHost=null, trackingCategory=null, trackingPackage=null;
   private boolean trackingStrong=false;
   private long trackingStarted=0, lastSeen=0, lastBlockedAction=0, lastWarning=0, lastHeartbeat=0;
@@ -135,6 +139,7 @@ public class GuardianService extends AccessibilityService {
     else if(pendingUntil>0)prefs.edit().remove("penalty_until_ms").apply();
     handler.removeCallbacks(heartbeat);
     handler.post(heartbeat);
+    connected=true;
     AccessibilityCompatibility.startIfEnabled(this);
   }
   @Override public void onAccessibilityEvent(AccessibilityEvent event){
@@ -217,7 +222,12 @@ public class GuardianService extends AccessibilityService {
     }finally{inspectingPip=false;}
   }
   @Override public void onInterrupt(){}
+  @Override public boolean onUnbind(Intent intent){
+    connected=false;
+    return super.onUnbind(intent);
+  }
   @Override public void onDestroy(){
+    connected=false;
     handler.removeCallbacks(heartbeat);
     handler.removeCallbacks(scopeRefresh);
     if(prefs!=null)prefs.unregisterOnSharedPreferenceChangeListener(scopePreferenceListener);

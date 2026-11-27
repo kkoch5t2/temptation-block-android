@@ -40,6 +40,12 @@ public final class AccessibilityCompatibility {
   }
   public static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false);}
   public static boolean suspended(Context c){return prefs(c).getBoolean("suspended",false);}
+  static boolean restoreFailed(Context c){
+    return "restore_failed".equals(prefs(c).getString("status",""));
+  }
+  static boolean startFailed(Context c){
+    return "start_failed".equals(prefs(c).getString("status",""));
+  }
   public static boolean ownEnabled(Context c){
     return CompatibilitySwitchPolicy.contains(Settings.Secure.getString(c.getContentResolver(),
       Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES),component(c));
@@ -70,6 +76,7 @@ public final class AccessibilityCompatibility {
   static synchronized boolean pause(Context c){
     if(!ownEnabled(c)||suspended(c))return false;
     if(!prefs(c).edit().putBoolean("suspended",true)
+        .putString("status","paused")
         .putLong("pause_started_elapsed",android.os.SystemClock.elapsedRealtime()).commit())return false;
     if(ownEnabled(c,false))return true;
     // A failed or partial settings write must attempt recovery.
@@ -78,7 +85,7 @@ public final class AccessibilityCompatibility {
   }
   static synchronized boolean restore(Context c){
     if(!suspended(c))return true;
-    if(!ownEnabled(c,true)){
+    if(!ownEnabled(c)&&!ownEnabled(c,true)){
       prefs(c).edit().putString("status","restore_failed").apply();
       return false;
     }
@@ -96,8 +103,7 @@ public final class AccessibilityCompatibility {
     if(!enabled(c)){restore(c);return;}
     try{c.startForegroundService(new Intent(c,CompatibilityService.class));}
     catch(RuntimeException e){
-      restore(c);
-      prefs(c).edit().putString("status","start_failed").apply();
+      if(restore(c))prefs(c).edit().putString("status","start_failed").apply();
     }
   }
 }

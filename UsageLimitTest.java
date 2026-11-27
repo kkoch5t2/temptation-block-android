@@ -20,6 +20,22 @@ public final class UsageLimitTest {
     ok(UsageLimit.accrue(599500,10000,600000)==600000,"Clamp excess");
     ok(UsageLimit.accrue(5000,0,600000)==5000,"Do not accrue when closed");
     ok(UsageLimit.accrue(0,40000,600000)==2000,"Clamp background gap");
+    long hour=60*60_000L;
+    int previousWarning=0;
+    for(int threshold:new int[]{30,10,5,3}){
+      long usedAtThreshold=hour-threshold*60_000L;
+      ok(UsageLimit.warningMinutes(hour,usedAtThreshold-1,previousWarning)==0,
+        "No early reminder before "+threshold+" minutes");
+      ok(UsageLimit.warningMinutes(hour,usedAtThreshold,previousWarning)==threshold,
+        "Reminder at "+threshold+" minutes");
+      ok(UsageLimit.warningMinutes(hour,usedAtThreshold+1,threshold)==0,
+        "Do not repeat the "+threshold+" minute reminder");
+      previousWarning=threshold;
+    }
+    ok(UsageLimit.warningMinutes(600_000,0,0)==10,"Ten minute group can warn at entry");
+    ok(UsageLimit.warningMinutes(60_000,0,0)==0,"Skip milestones above the group allowance");
+    ok(UsageLimit.warningMinutes(hour,hour-4*60_000L,0)==5,"Use the closest threshold when several were passed");
+    ok(UsageLimit.warningMinutes(hour,hour,0)==0,"Blocking takes priority at exhaustion");
     long deadline=CooldownPolicy.deadline(100000);
     ok(deadline==130000,"Penalty lasts 30s");
     ok(CooldownPolicy.waiting(100000,deadline),"Penalty starts active");

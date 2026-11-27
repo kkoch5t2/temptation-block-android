@@ -172,6 +172,14 @@ public class GroupRulesTest {
     eq(GroupRules.minutes(p,GroupRules.DEFAULT),10,"legacy ten minutes");
     String a1=GroupRules.create(p,"漫画・動画",GroupRules.DAILY,3);
     String a2=GroupRules.create(p,"ゲーム禁止",GroupRules.BLOCK,10);
+    SharedPreferences.Editor reminders=p.edit();
+    GroupRules.saveWarning(reminders,a1,"20261127",3);
+    GroupRules.saveWarning(reminders,GroupRules.DEFAULT,"20261127",10);
+    reminders.apply();
+    Memory reloaded=new Memory();reloaded.map.putAll(p.map);
+    eq(GroupRules.todayWarningMinutes(reloaded,a1,"20261127"),3,"group reminder survives reload");
+    eq(GroupRules.todayWarningMinutes(reloaded,GroupRules.DEFAULT,"20261127"),10,"groups track independent reminders");
+    eq(GroupRules.todayWarningMinutes(reloaded,a1,"20261128"),0,"next day resets reminders");
     GroupRules.assignApp(p,a1,"com.example.manga");
     eq(GroupRules.appGroup(p,"com.example.manga"),a1,"app group assignment");
     eq(GroupRules.todayUsed(p,a1,today),123000L,"move cannot reset usage");

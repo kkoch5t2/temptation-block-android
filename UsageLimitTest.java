@@ -20,6 +20,29 @@ public final class UsageLimitTest {
     ok(UsageLimit.accrue(599500,10000,600000)==600000,"Clamp excess");
     ok(UsageLimit.accrue(5000,0,600000)==5000,"Do not accrue when closed");
     ok(UsageLimit.accrue(0,40000,600000)==2000,"Clamp background gap");
+    long hour=60*60_000L;
+    long budget=2*hour;
+    for(int threshold:new int[]{60,30,10,5,3,1}){
+      long usedAtThreshold=budget-threshold*60_000L;
+      ok(UsageLimit.warningMinutes(budget,usedAtThreshold-2,usedAtThreshold-1)==0,
+        "No early reminder before "+threshold+" minutes");
+      ok(UsageLimit.warningMinutes(budget,usedAtThreshold-1,usedAtThreshold)==threshold,
+        "Reminder at "+threshold+" minutes");
+      ok(UsageLimit.warningMinutes(budget,usedAtThreshold-1,usedAtThreshold+1)==threshold,
+        "Reminder when a tick crosses "+threshold+" minutes");
+      ok(UsageLimit.warningMinutes(budget,usedAtThreshold,usedAtThreshold+1)==0,
+        "No repeat after crossing "+threshold+" minutes");
+      ok(UsageLimit.warningMinutes(budget,usedAtThreshold+1,usedAtThreshold+1)==0,
+        "No reminder when opening below "+threshold+" minutes");
+    }
+    ok(UsageLimit.warningMinutes(600_000,0,0)==0,"Opening alone does not display a reminder");
+    ok(UsageLimit.warningMinutes(hour,0,0)==0,"Opening a one hour group does not display a reminder");
+    ok(UsageLimit.warningMinutes(hour,0,1000)==60,"One hour group warns when usage starts");
+    ok(UsageLimit.warningMinutes(600_000,0,1000)==10,"Ten minute group warns when usage starts");
+    ok(UsageLimit.warningMinutes(60_000,0,1000)==1,"One minute group warns when usage starts");
+    ok(UsageLimit.warningMinutes(60_000,1000,2000)==0,"Ignore milestones above the group allowance");
+    ok(UsageLimit.warningMinutes(120_000,59_999,60_000)==1,"One minute threshold after changing the allowance");
+    ok(UsageLimit.warningMinutes(hour,hour-1000,hour)==0,"Blocking takes priority at exhaustion");
     long deadline=CooldownPolicy.deadline(100000);
     ok(deadline==130000,"Penalty lasts 30s");
     ok(CooldownPolicy.waiting(100000,deadline),"Penalty starts active");

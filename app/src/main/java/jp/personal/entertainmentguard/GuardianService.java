@@ -23,8 +23,10 @@ import android.view.WindowManager;
 import android.widget.TextView;
 import android.widget.LinearLayout;
 import android.widget.Button;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.HashSet;
+import java.util.Map;
 
 public class GuardianService extends AccessibilityService {
   private static final long CHECK_INTERVAL=1000;
@@ -34,7 +36,7 @@ public class GuardianService extends AccessibilityService {
   private boolean trackingStrong=false;
   private long trackingStarted=0, lastSeen=0, lastBlockedAction=0, lastWarning=0, lastHeartbeat=0;
   private final java.util.Set<String> usageGroups=new java.util.HashSet<>();
-  private long usageLastTick=0, usageWarningAt=0;
+  private long usageLastTick=0;
   private boolean closingBlockedTab=false;
   private String deniedKey=null,deniedOwner=null;
   private int deniedWindow=-1;
@@ -409,7 +411,7 @@ public class GuardianService extends AccessibilityService {
   }
   private void enforceBoth(String firstKey,String secondKey,String category,String type){
     if(prefs==null||blockingOverlay!=null)return;
-    java.util.LinkedHashMap<String,String> groups=new java.util.LinkedHashMap<>();
+    Map<String,String> groups=new LinkedHashMap<>();
     for(String key:new String[]{firstKey,secondKey}){
       if(key==null)continue;
       String id=GroupRules.DEFAULT;
@@ -422,6 +424,7 @@ public class GuardianService extends AccessibilityService {
     PowerManager pm=(PowerManager)getSystemService(Context.POWER_SERVICE);
     if(pm!=null)interactive=pm.isInteractive();
     String today=new SimpleDateFormat("yyyyMMdd",Locale.US).format(new Date());
+    StringBuilder warning=null;
     if(interactive && usageLastTick>0 && now>=usageLastTick){
       long delta=now-usageLastTick;
       for(String previous:new java.util.HashSet<>(usageGroups)){
@@ -430,17 +433,22 @@ public class GuardianService extends AccessibilityService {
         long budget=GroupRules.minutes(prefs,previous)*60000L;
         long spent=GroupRules.todayUsed(prefs,previous,today);
         long updated=UsageLimit.accrue(spent,delta,budget);
-        if(updated!=spent)
-          prefs.edit().putString(GroupRules.dateKey(previous),today)
-            .putLong(GroupRules.usedKey(previous),updated).apply();
+        if(updated==spent)continue;
+        prefs.edit().putString(GroupRules.dateKey(previous),today)
+          .putLong(GroupRules.usedKey(previous),updated).apply();
+        if(!groups.containsKey(previous))continue;
+        int threshold=UsageLimit.warningMinutes(budget,spent,updated);
+        if(threshold==0)continue;
+        if(warning==null)warning=new StringBuilder();
+        else warning.append('\n');
+        warning.append("⏱ ").append(GroupRules.name(prefs,previous)).append("：残り")
+          .append(threshold==60?"1時間":threshold+"分").append("以内");
       }
     }
     usageGroups.clear();
     if(interactive)usageGroups.addAll(groups.keySet());
     usageLastTick=interactive&&!groups.isEmpty()?now:0;
-    long shortestRemaining=Long.MAX_VALUE;
-    String shortestName=null, shortestTime=null;
-    for(java.util.Map.Entry<String,String> entry:groups.entrySet()){
+    for(Map.Entry<String,String> entry:groups.entrySet()){
       String id=entry.getKey();
       String key=entry.getValue();
       if(GroupRules.mode(prefs,id)==GroupRules.BLOCK){
@@ -451,18 +459,8 @@ public class GuardianService extends AccessibilityService {
       if(UsageLimit.isExhausted(budget,spent)){
         stopUsage();blockAndCloseIfBrowser(key,category,type);return;
       }
-      long remaining=UsageLimit.remainingSeconds(budget,spent);
-      if(remaining<shortestRemaining){
-        shortestRemaining=remaining;
-        shortestName=GroupRules.name(prefs,id);
-        shortestTime=UsageLimit.formatRemaining(budget,spent);
-      }
     }
-    if(interactive && shortestName!=null &&
-        (usageWarningAt==0||now-usageWarningAt>=3600000L)){
-      usageWarningAt=now;
-      showWarning("⏱ "+shortestName+"：残り "+shortestTime);
-    }
+    if(warning!=null)showWarning(warning.toString());
   }
   private void stopUsage(){
     usageGroups.clear();
